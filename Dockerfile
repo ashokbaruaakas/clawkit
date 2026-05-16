@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     file \
     git \
+    openssh-client \
     procps \
     sudo \
     && rm -rf /var/lib/apt/lists/*
