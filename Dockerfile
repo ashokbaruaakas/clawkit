@@ -26,6 +26,11 @@ ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}
 
 USER node
 
+# Configure global npm installs for non-root user.
+ENV NPM_CONFIG_PREFIX=/home/node/.npm-global
+ENV PATH=/home/node/.npm-global/bin:${PATH}
+RUN mkdir -p ${NPM_CONFIG_PREFIX}
+
 # Install Homebrew in a non-interactive, deterministic way.
 RUN git clone --depth=1 https://github.com/Homebrew/brew "${HOMEBREW_REPOSITORY}" && \
     mkdir -p "${HOMEBREW_PREFIX}/bin" "${HOMEBREW_PREFIX}/sbin" && \
