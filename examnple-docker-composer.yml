@@ -1,0 +1,20 @@
+services:
+  ${CONTAINER_NAME}:
+    image: ${IMAGE_NAME}:${IMAGE_TAG:-latest}
+    container_name: "${CONTAINER_NAME}"
+    pull_policy: always
+    init: true
+    ports:
+      - "127.0.0.1:${PORT}:${PORT}"
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - node-home:/home/node
+      - linuxbrew-prefix:/home/linuxbrew/.linuxbrew
+
+volumes:
+  node-home:
+    name: ${CONTAINER_NAME}-node-home
+  linuxbrew-prefix:
+    name: ${CONTAINER_NAME}-linuxbrew-prefix
