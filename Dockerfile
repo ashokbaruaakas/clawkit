@@ -30,3 +30,8 @@ RUN git clone --depth=1 https://github.com/Homebrew/brew "${HOMEBREW_REPOSITORY}
     mkdir -p "${HOMEBREW_PREFIX}/bin" "${HOMEBREW_PREFIX}/sbin" && \
     ln -sf "${HOMEBREW_REPOSITORY}/bin/brew" "${HOMEBREW_PREFIX}/bin/brew" && \
     brew update --force --quiet
+
+# Make node compile cache directory and grant ownership to the runtime user.
+ENV NODE_COMPILE_CACHE=/home/node/.cache/node-compile-cache
+RUN mkdir -p ${NODE_COMPILE_CACHE} && \
+    chown -R node:node ${NODE_COMPILE_CACHE}
