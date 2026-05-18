@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     procps \
     sudo \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Prepare Linuxbrew home and grant ownership to the runtime user.
@@ -30,9 +31,6 @@ RUN git clone --depth=1 https://github.com/Homebrew/brew "${HOMEBREW_REPOSITORY}
     mkdir -p "${HOMEBREW_PREFIX}/bin" "${HOMEBREW_PREFIX}/sbin" && \
     ln -sf "${HOMEBREW_REPOSITORY}/bin/brew" "${HOMEBREW_PREFIX}/bin/brew" && \
     brew update --force --quiet
-
-# Install vi editor using Homebrew
-RUN brew install vim
 
 # Make node compile cache directory and grant ownership to the runtime user.
 ENV NODE_COMPILE_CACHE=/home/node/.cache/node-compile-cache
