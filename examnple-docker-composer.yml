@@ -1,5 +1,5 @@
 services:
-  ${CONTAINER_NAME}:
+  openclaw:
     image: ${IMAGE_NAME}:${IMAGE_TAG:-latest}
     container_name: "${CONTAINER_NAME}"
     pull_policy: always
@@ -15,6 +15,6 @@ services:
 
 volumes:
   node-home:
-    name: ${CONTAINER_NAME}-node-home
+    name: openclaw-node-home
   linuxbrew-prefix:
-    name: ${CONTAINER_NAME}-linuxbrew-prefix
+    name: openclaw-linuxbrew-prefix
