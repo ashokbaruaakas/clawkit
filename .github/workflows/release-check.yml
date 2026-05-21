@@ -50,54 +50,74 @@ jobs:
         run: |
           MAX_ATTEMPTS=3
           DELAY=5
-
           current_digest=""
           upstream_version=""
 
-          # -- Pull image manifest (fast, doesn't download layers) and get digest --
+          echo "::group::Pull image manifest and extract digest"
           for i in $(seq 1 $MAX_ATTEMPTS); do
-            # Pull the manifest for a single platform (does not download layers on GH runners)
-            docker pull alpine/openclaw:latest --platform linux/amd64 -q 2>/dev/null || {
-              echo "WARNING: docker pull failed (attempt $i/$MAX_ATTEMPTS)"
+            echo "  [attempt $i/$MAX_ATTEMPTS] docker pull alpine/openclaw:latest --platform linux/amd64 ..."
+            PULL_OUTPUT=$(docker pull alpine/openclaw:latest --platform linux/amd64 -q 2>&1) || {
+              echo "  WARNING: docker pull exited with code $?"
+              echo "  Pull output: $PULL_OUTPUT"
               [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
               continue
             }
-            # Extract the registry digest from RepoDigests
-            current_digest=$(docker image inspect alpine/openclaw:latest --format '{{index .RepoDigests 0}}' 2>/dev/null | awk -F'@' '{print $2}' || echo "")
-            [ -n "$current_digest" ] && break
+            echo "  Pull succeeded, extracting digest from RepoDigests..."
+            current_digest=$(docker image inspect alpine/openclaw:latest --format '{{index .RepoDigests 0}}' 2>&1 | awk -F'@' '{print $2}' || echo "")
+            if [ -n "$current_digest" ]; then
+              echo "  Digest obtained: ${current_digest:0:19}..."
+              break
+            fi
+            echo "  WARNING: Digest extraction returned empty"
             [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
           done
+          echo "::endgroup::"
 
           if [ -z "$current_digest" ]; then
-            echo "ERROR: Failed to fetch upstream digest after $MAX_ATTEMPTS attempts"
+            echo "::error::Failed to fetch upstream digest after $MAX_ATTEMPTS attempts"
             exit 1
           fi
           echo "current_digest=$current_digest" >> "$GITHUB_OUTPUT"
+          echo "OUTPUT current_digest=${current_digest:0:19}..."
 
-          # -- Fetch tags list via Docker Hub API (fallback-safe) --
+          echo "::group::Fetch upstream version tags"
           for i in $(seq 1 $MAX_ATTEMPTS); do
-            tags=$(curl -sS --max-time 15 \
+            echo "  [attempt $i/$MAX_ATTEMPTS] querying Docker Hub tags API ..."
+            TAGS_RESP=$(curl -sS --max-time 15 \
               "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20" 2>&1) || true
-            upstream_version=$(echo "$tags" | jq -r \
+            HTTP_CODE=$(echo "$TAGS_RESP" | jq -r '.detail // empty' 2>/dev/null || echo "")
+            if [ -n "$HTTP_CODE" ]; then
+              echo "  WARNING: API returned error: $HTTP_CODE"
+            fi
+            upstream_version=$(echo "$TAGS_RESP" | jq -r \
               '[.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.tag_last_pushed) | last | .name // empty' 2>/dev/null || echo "")
-            [ -n "$upstream_version" ] && break
+            if [ -n "$upstream_version" ]; then
+              echo "  Found upstream version: $upstream_version"
+              break
+            fi
+            echo "  WARNING: No version tag found in API response (attempt $i/$MAX_ATTEMPTS)"
             [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
           done
-
-          # Fallback: use current date if no version tag found
           if [ -z "$upstream_version" ]; then
-            echo "WARNING: No stable version tag found, using today's date"
+            echo "  WARNING: No stable version tag found, using today's date as fallback"
             upstream_version=$(date +%Y%m%d)
           fi
+          echo "  Final upstream_version=$upstream_version"
+          echo "::endgroup::"
           echo "upstream_version=$upstream_version" >> "$GITHUB_OUTPUT"
+          echo "OUTPUT upstream_version=$upstream_version"
 
       - name: Write current upstream state (unconditional)
         run: |
+          echo "Writing current state to /tmp/upstream-state.json"
+          echo "  digest:  ${{ steps.check.outputs.current_digest }}"
+          echo "  version: ${{ steps.check.outputs.upstream_version }}"
           jq -n \
             --arg digest "${{ steps.check.outputs.current_digest }}" \
             --arg version "${{ steps.check.outputs.upstream_version }}" \
             '{digest: $digest, version: $version}' \
             > /tmp/upstream-state.json
+          echo "Written: $(cat /tmp/upstream-state.json)"
 
       - name: Restore cached upstream state
         id: cache-restore
@@ -109,53 +129,78 @@ jobs:
       - name: Decide whether to proceed
         id: decide
         run: |
+          echo "::group::Decision logic"
           current_digest="${{ steps.check.outputs.current_digest }}"
           force="${{ github.event.inputs.force_release == 'true' && 'true' || 'false' }}"
 
-          # Restore previous state from cache (may have been overwritten by the unconditional write)
+          echo "  Current digest: ${current_digest:0:19}..."
+          echo "  Force release:  $force"
+
+          # Check if cache file exists (restored or written unconditionally)
           if [ -f /tmp/upstream-state.json ]; then
-            # Read cached values (these are the last known good state)
             cached_digest=$(jq -r '.digest' /tmp/upstream-state.json)
             cached_version=$(jq -r '.version' /tmp/upstream-state.json)
+            echo "  Cache file found:"
+            echo "    cached_digest:  ${cached_digest:0:19}..."
+            echo "    cached_version: $cached_version"
+          else
+            cached_digest=""
+            cached_version=""
+            echo "  Cache file NOT found (first run or cache restore missed)"
           fi
 
           # Force release -> always proceed
           if [ "$force" = "true" ]; then
+            echo "  Decision: FORCE RELEASE (manual override)"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=force" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
             exit 0
           fi
 
           # First run (no cache) -> proceed
           if [ -z "$cached_digest" ]; then
+            echo "  Decision: FIRST RUN - proceeding with initial release"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=first_run" >> "$GITHUB_OUTPUT"
+            echo "::endgroup::"
             exit 0
           fi
 
           # Compare digests
           if [ "$current_digest" = "$cached_digest" ]; then
+            echo "  Decision: UNCHANGED - upstream digest matches cached value"
+            echo "  No release needed."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             echo "reason=unchanged" >> "$GITHUB_OUTPUT"
-            echo "Upstream unchanged ($current_digest). No release needed."
           else
+            echo "  Decision: UPDATED - upstream digest has changed"
+            echo "  Old: ${cached_digest:0:19}..."
+            echo "  New: ${current_digest:0:19}..."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=updated" >> "$GITHUB_OUTPUT"
           fi
+          echo "::endgroup::"
 
       - name: Determine next version
         id: version
         if: steps.decide.outputs.proceed == 'true'
         run: |
+          echo "::group::Determine next version"
           latest_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           if [ -z "$latest_tag" ]; then
+            echo "  No existing tags found, starting from v0.0.0"
             latest_tag="v0.0.0"
+          else
+            echo "  Latest tag: $latest_tag"
           fi
           major=$(echo "$latest_tag" | cut -d. -f1 | tr -d v)
           minor=$(echo "$latest_tag" | cut -d. -f2)
           patch=$(echo "$latest_tag" | cut -d. -f3)
           new_patch=$((patch + 1))
+          echo "  Next version: v${major}.${minor}.${new_patch}"
           echo "version=v${major}.${minor}.${new_patch}" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
 
       - name: Set up QEMU
         if: steps.decide.outputs.proceed == 'true'
@@ -196,22 +241,28 @@ jobs:
       - name: Create git tag
         if: steps.decide.outputs.proceed == 'true'
         run: |
+          echo "::group::Create git tag"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           TAG="${{ steps.version.outputs.version }}"
+          echo "  Tag: $TAG"
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Error: Tag '$TAG' already exists"
+            echo "::error::Tag '$TAG' already exists"
             exit 1
           fi
           git tag "$TAG"
+          echo "  Local tag created, pushing to origin..."
           git push origin "$TAG"
+          echo "  Tag pushed successfully"
+          echo "::endgroup::"
 
       - name: Create GitHub Release
         if: steps.decide.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          echo "::group::Create GitHub Release"
           VERSION="${{ steps.version.outputs.version }}"
           UPSTREAM="${{ steps.check.outputs.upstream_version }}"
           DIGEST="${{ steps.check.outputs.current_digest }}"
@@ -220,15 +271,17 @@ jobs:
           REASON="${{ steps.decide.outputs.reason }}"
           RELEASE_TYPE="${{ github.event.inputs.release_type || 'auto' }}"
 
-          # Truncate digests for display
+          echo "  Version: $VERSION"
+          echo "  Reason:  $REASON"
+
           SHORT_DIGEST=$(echo "$DIGEST" | head -c 19)
           SHORT_PREV=$(echo "$PREV_DIGEST" | head -c 19)
 
-          # -- Build release notes into a temp file (avoids YAML multi-line string issues) --
+          # Build release notes into a temp file (avoids YAML multi-line string issues)
           NOTES_FILE=$(mktemp)
 
-          # Scheduled auto-run: upstream changed
           if [ "$REASON" = "updated" ]; then
+            echo "  Type: upstream updated"
             echo "## What's Changed" > "$NOTES_FILE"
             echo "" >> "$NOTES_FILE"
             if [ -n "$PREV_VERSION" ]; then
@@ -242,8 +295,8 @@ jobs:
             echo "" >> "$NOTES_FILE"
             echo "_Auto-generated by clawkit release workflow_" >> "$NOTES_FILE"
 
-          # First run (no cache)
           elif [ "$REASON" = "first_run" ]; then
+            echo "  Type: initial release"
             echo "## What's Changed" > "$NOTES_FILE"
             echo "" >> "$NOTES_FILE"
             echo "**Initial clawkit release** based on OpenClaw \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)" >> "$NOTES_FILE"
@@ -252,8 +305,8 @@ jobs:
             echo "" >> "$NOTES_FILE"
             echo "_Auto-generated by clawkit release workflow_" >> "$NOTES_FILE"
 
-          # Force release (manual trigger)
           else
+            echo "  Type: manual force ($RELEASE_TYPE)"
             echo "## What's Changed" > "$NOTES_FILE"
             echo "" >> "$NOTES_FILE"
             case "$RELEASE_TYPE" in
@@ -275,12 +328,22 @@ jobs:
             echo "_Triggered manually | Auto-generated by clawkit release workflow_" >> "$NOTES_FILE"
           fi
 
+          echo "  Creating release on GitHub..."
           gh release create "$VERSION" \
             --title "$VERSION" \
             --notes-file "$NOTES_FILE"
+          echo "  Release created"
+          echo "::endgroup::"
 
       - name: Save upstream state to cache
         uses: actions/cache/save@v4
         with:
           path: /tmp/upstream-state.json
           key: last-upstream-state
+      - name: Log cached state
+        if: steps.decide.outputs.proceed == 'true'
+        run: |
+          echo "::group::Save upstream state to cache"
+          echo "  Caching /tmp/upstream-state.json as 'last-upstream-state'"
+          echo "  Contents: $(cat /tmp/upstream-state.json 2>/dev/null || echo 'file not found')"
+          echo "::endgroup::"
