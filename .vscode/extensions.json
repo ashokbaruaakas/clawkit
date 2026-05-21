@@ -1,0 +1,16 @@
+{
+  "recommendations": [
+    "editorconfig.editorconfig",
+    "ms-azuretools.vscode-docker",
+    "redhat.vscode-yaml",
+    "foxundermoon.shell-format",
+    "yzhang.markdown-all-in-one",
+    "bierner.markdown-mermaid",
+    "eamodio.gitlens",
+    "github.vscode-github-actions",
+    "timonwong.shellcheck",
+    "mads-hartmann.bash-ide-vscode",
+    "ms-vscode-remote.remote-containers"
+  ],
+  "unwantedRecommendations": []
+}
