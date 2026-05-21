@@ -51,32 +51,19 @@ jobs:
           MAX_ATTEMPTS=3
           DELAY=5
 
-          # -- Try to get Docker Hub auth token for higher rate limits --
-          TOKEN=
-          TOKEN_RESP=$(curl -sS --max-time 10 \
-            "https://auth.docker.io/token?service=registry.docker.io&scope=repository:alpine/openclaw:pull" 2>&1) || true
-          TOKEN=$(echo "$TOKEN_RESP" | jq -r '.token // empty' 2>/dev/null || echo "")
-
-          if [ -n "$TOKEN" ]; then
-            AUTH_HEADER="Authorization: Bearer $TOKEN"
-          else
-            echo "INFO: Anonymous Docker Hub token not available, proceeding without auth"
-            AUTH_HEADER=""
-          fi
-
           current_digest=""
-          latest=""
+          upstream_version=""
 
-          # -- Fetch latest tag info with retry --
+          # -- Pull image manifest (fast, doesn't download layers) and get digest --
           for i in $(seq 1 $MAX_ATTEMPTS); do
-            if [ -n "$AUTH_HEADER" ]; then
-              latest=$(curl -sS --max-time 15 -H "$AUTH_HEADER" \
-                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags/latest" 2>&1) || true
-            else
-              latest=$(curl -sS --max-time 15 \
-                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags/latest" 2>&1) || true
-            fi
-            current_digest=$(echo "$latest" | jq -r '.digest // empty' 2>/dev/null || echo "")
+            # Pull the manifest for a single platform (does not download layers on GH runners)
+            docker pull alpine/openclaw:latest --platform linux/amd64 -q 2>/dev/null || {
+              echo "WARNING: docker pull failed (attempt $i/$MAX_ATTEMPTS)"
+              [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
+              continue
+            }
+            # Extract the registry digest from RepoDigests
+            current_digest=$(docker image inspect alpine/openclaw:latest --format '{{index .RepoDigests 0}}' 2>/dev/null | awk -F'@' '{print $2}' || echo "")
             [ -n "$current_digest" ] && break
             [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
           done
@@ -87,27 +74,20 @@ jobs:
           fi
           echo "current_digest=$current_digest" >> "$GITHUB_OUTPUT"
 
-          upstream_version=""
-
-          # -- Fetch tags list to find the most recent stable version --
+          # -- Fetch tags list via Docker Hub API (fallback-safe) --
           for i in $(seq 1 $MAX_ATTEMPTS); do
-            if [ -n "$AUTH_HEADER" ]; then
-              tags=$(curl -sS --max-time 15 -H "$AUTH_HEADER" \
-                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20" 2>&1) || true
-            else
-              tags=$(curl -sS --max-time 15 \
-                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20" 2>&1) || true
-            fi
+            tags=$(curl -sS --max-time 15 \
+              "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20" 2>&1) || true
             upstream_version=$(echo "$tags" | jq -r \
               '[.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.tag_last_pushed) | last | .name // empty' 2>/dev/null || echo "")
             [ -n "$upstream_version" ] && break
             [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
           done
 
-          # Fallback: use last_updated date if no stable version tag found
+          # Fallback: use current date if no version tag found
           if [ -z "$upstream_version" ]; then
-            echo "WARNING: No stable version tag found, using tag_last_pushed date"
-            upstream_version=$(echo "$latest" | jq -r '.tag_last_pushed[0:10] // "unknown"' 2>/dev/null || echo "unknown")
+            echo "WARNING: No stable version tag found, using today's date"
+            upstream_version=$(date +%Y%m%d)
           fi
           echo "upstream_version=$upstream_version" >> "$GITHUB_OUTPUT"
 
