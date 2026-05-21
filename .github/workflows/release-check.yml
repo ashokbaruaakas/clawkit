@@ -38,6 +38,7 @@ jobs:
       upstream_version: ${{ steps.check.outputs.upstream_version }}
       prev_digest: ${{ steps.decide.outputs.prev_digest }}
       prev_version: ${{ steps.decide.outputs.prev_version }}
+      reason: ${{ steps.decide.outputs.reason }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -47,19 +48,28 @@ jobs:
       - name: Fetch upstream info
         id: check
         run: |
-          # ── Authenticated Docker Hub API access ──
-          # Get anonymous token for higher rate limits
-          TOKEN=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:alpine/openclaw:pull" \
+          # -- Docker Hub API with auth and retry --
+          TOKEN=$(curl -sf "https://auth.docker.io/token?service=registry.docker.io&scope=repository:alpine/openclaw:pull" \
             | jq -r '.token // empty')
 
-          AUTH_HEADER="Authorization: Bearer $TOKEN"
+          if [ -z "$TOKEN" ]; then
+            echo "WARNING: Failed to get Docker Hub auth token, falling back to anonymous"
+            AUTH_HEADER=""
+          else
+            AUTH_HEADER="Authorization: Bearer $TOKEN"
+          fi
+
           MAX_ATTEMPTS=3
           DELAY=5
 
-          # ── Fetch latest tag info with retry ──
+          # -- Fetch latest tag info with retry --
           for i in $(seq 1 $MAX_ATTEMPTS); do
-            latest=$(curl -s -H "$AUTH_HEADER" \
-              "https://hub.docker.com/v2/repositories/alpine/openclaw/tags/latest")
+            if [ -n "$AUTH_HEADER" ]; then
+              latest=$(curl -sf -H "$AUTH_HEADER" \
+                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags/latest")
+            else
+              latest=$(curl -sf "https://hub.docker.com/v2/repositories/alpine/openclaw/tags/latest")
+            fi
             current_digest=$(echo "$latest" | jq -r '.digest // empty')
             [ -n "$current_digest" ] && break
             [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
@@ -71,10 +81,14 @@ jobs:
           fi
           echo "current_digest=$current_digest" >> "$GITHUB_OUTPUT"
 
-          # ── Fetch tags list to find the most recent stable version ──
+          # -- Fetch tags list to find the most recent stable version --
           for i in $(seq 1 $MAX_ATTEMPTS); do
-            tags=$(curl -s -H "$AUTH_HEADER" \
-              "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20")
+            if [ -n "$AUTH_HEADER" ]; then
+              tags=$(curl -sf -H "$AUTH_HEADER" \
+                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20")
+            else
+              tags=$(curl -sf "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20")
+            fi
             upstream_version=$(echo "$tags" | jq -r \
               '[.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.tag_last_pushed) | last | .name // empty')
             [ -n "$upstream_version" ] && break
@@ -87,6 +101,14 @@ jobs:
             upstream_version=$(echo "$latest" | jq -r '.tag_last_pushed[0:10] // "unknown"')
           fi
           echo "upstream_version=$upstream_version" >> "$GITHUB_OUTPUT"
+
+      - name: Write current upstream state (unconditional)
+        run: |
+          jq -n \
+            --arg digest "${{ steps.check.outputs.current_digest }}" \
+            --arg version "${{ steps.check.outputs.upstream_version }}" \
+            '{digest: $digest, version: $version}' \
+            > /tmp/upstream-state.json
 
       - name: Restore cached upstream state
         id: cache-restore
@@ -101,30 +123,42 @@ jobs:
           current_digest="${{ steps.check.outputs.current_digest }}"
           force="${{ github.event.inputs.force_release == 'true' && 'true' || 'false' }}"
 
-          # Restore previous state if cache was hit
+          # Restore previous state from cache (may have been overwritten by the unconditional write)
           if [ -f /tmp/upstream-state.json ]; then
-            prev_digest=$(jq -r '.digest' /tmp/upstream-state.json)
-            prev_version=$(jq -r '.version' /tmp/upstream-state.json)
-            echo "prev_digest=$prev_digest" >> "$GITHUB_OUTPUT"
-            echo "prev_version=$prev_version" >> "$GITHUB_OUTPUT"
+            # Read cached values (these are the last known good state)
+            cached_digest=$(jq -r '.digest' /tmp/upstream-state.json)
+            cached_version=$(jq -r '.version' /tmp/upstream-state.json)
           fi
 
-          # Force release → always proceed
+          # Now overwrite with CURRENT state for the decision logic
+          jq -n \
+            --arg digest "$current_digest" \
+            --arg version "${{ steps.check.outputs.upstream_version }}" \
+            '{digest: $digest, version: $version}' \
+            > /tmp/upstream-state.json
+
+          # Set previous values from the restored cache
+          if [ -n "$cached_digest" ]; then
+            echo "prev_digest=$cached_digest" >> "$GITHUB_OUTPUT"
+            echo "prev_version=$cached_version" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Force release -> always proceed
           if [ "$force" = "true" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=force" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          # First run (no cache) → proceed
-          if [ ! -f /tmp/upstream-state.json ]; then
+          # First run (no cache) -> proceed
+          if [ -z "$cached_digest" ]; then
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=first_run" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           # Compare digests
-          if [ "$current_digest" = "$prev_digest" ]; then
+          if [ "$current_digest" = "$cached_digest" ]; then
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             echo "reason=unchanged" >> "$GITHUB_OUTPUT"
             echo "Upstream unchanged ($current_digest). No release needed."
@@ -210,38 +244,42 @@ jobs:
           REASON="${{ steps.decide.outputs.reason }}"
           RELEASE_TYPE="${{ github.event.inputs.release_type || 'auto' }}"
 
-          # ── Build release notes ──
+          # Truncate digests for display
+          SHORT_DIGEST=$(echo "$DIGEST" | head -c 19)
+          SHORT_PREV=$(echo "$PREV_DIGEST" | head -c 19)
+
+          # -- Build release notes --
 
           # Scheduled auto-run: upstream changed
           if [ "$REASON" = "updated" ]; then
             if [ -n "$PREV_VERSION" ]; then
               NOTES="## What's Changed
 
-          ⚡ **OpenClaw upstream updated** \`${PREV_VERSION}\` → \`${UPSTREAM}\`
-            Digest: \`$(echo "$PREV_DIGEST" | head -c 19)…\` → \`$(echo "$DIGEST" | head -c 19)…\`
+**OpenClaw upstream updated** \`${PREV_VERSION}\` -> \`${UPSTREAM}\`
+  Digest: \`${SHORT_PREV}...\` -> \`${SHORT_DIGEST}...\`
 
-          🔧 Clawkit image \`${VERSION}\` based on \`alpine/openclaw:${UPSTREAM}\`
+**Clawkit image** \`${VERSION}\` based on \`alpine/openclaw:${UPSTREAM}\`
 
-          _Auto-generated by clawkit release workflow_"
+_Auto-generated by clawkit release workflow_"
             else
               NOTES="## What's Changed
 
-          ⚡ **OpenClaw upstream updated** → \`${UPSTREAM}\` (digest: \`$(echo "$DIGEST" | head -c 19)…\`)
+**OpenClaw upstream updated** -> \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)
 
-          🔧 Clawkit image \`${VERSION}\` based on \`alpine/openclaw:${UPSTREAM}\`
+**Clawkit image** \`${VERSION}\` based on \`alpine/openclaw:${UPSTREAM}\`
 
-          _Auto-generated by clawkit release workflow_"
+_Auto-generated by clawkit release workflow_"
             fi
 
           # First run (no cache)
           elif [ "$REASON" = "first_run" ]; then
             NOTES="## What's Changed
 
-          ⚡ **Initial clawkit release** based on OpenClaw \`${UPSTREAM}\` (digest: \`$(echo "$DIGEST" | head -c 19)…\`)
+**Initial clawkit release** based on OpenClaw \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)
 
-          🔧 Clawkit image \`${VERSION}\` with Linuxbrew + development tools
+**Clawkit image** \`${VERSION}\` with Linuxbrew + development tools
 
-          _Auto-generated by clawkit release workflow_"
+_Auto-generated by clawkit release workflow_"
 
           # Force release (manual trigger)
           else
@@ -249,27 +287,27 @@ jobs:
               code_update)
                 NOTES="## What's Changed
 
-          🔧 **Clawkit code update** — \`${VERSION}\`
-            - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`$(echo "$DIGEST" | head -c 19)…\`)
+**Clawkit code update** -- \`${VERSION}\`
+  - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)
 
-          _Triggered manually | Auto-generated by clawkit release workflow_"
+_Triggered manually | Auto-generated by clawkit release workflow_"
                 ;;
               emergency)
                 NOTES="## What's Changed
 
-          🚨 **Emergency release** — \`${VERSION}\`
-            - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`$(echo "$DIGEST" | head -c 19)…\`)
+**Emergency release** -- \`${VERSION}\`
+  - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)
 
-          _Triggered manually | Auto-generated by clawkit release workflow_"
+_Triggered manually | Auto-generated by clawkit release workflow_"
                 ;;
               *)
                 NOTES="## What's Changed
 
-          🔧 **Manual force release** — \`${VERSION}\`
-            - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`$(echo "$DIGEST" | head -c 19)…\`)
-            - No upstream change detected — release was forced
+**Manual force release** -- \`${VERSION}\`
+  - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)
+  - No upstream change detected -- release was forced
 
-          _Auto-generated by clawkit release workflow_"
+_Auto-generated by clawkit release workflow_"
                 ;;
             esac
           fi
@@ -278,17 +316,7 @@ jobs:
             --title "$VERSION" \
             --notes "$NOTES"
 
-      - name: Write upstream state
-        if: steps.decide.outputs.proceed == 'true'
-        run: |
-          jq -n \
-            --arg digest "${{ steps.check.outputs.current_digest }}" \
-            --arg version "${{ steps.check.outputs.upstream_version }}" \
-            '{digest: $digest, version: $version}' \
-            > /tmp/upstream-state.json
-
       - name: Save upstream state to cache
-        if: steps.decide.outputs.proceed == 'true'
         uses: actions/cache/save@v4
         with:
           path: /tmp/upstream-state.json

@@ -16,7 +16,8 @@ trim_trailing_whitespace = false
 
 [*.{sh,bash,zsh}]
 indent_size = 2
-shell_variant = posix
+# shell_variant = posix is used by the foxundermoon.shell-format VS Code extension,
+# not a standard EditorConfig property. Editors without the extension ignore it.
 
 [Dockerfile]
 indent_size = 4
