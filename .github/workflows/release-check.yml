@@ -47,6 +47,8 @@ jobs:
 
       - name: Fetch upstream info
         id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           MAX_ATTEMPTS=3
           DELAY=5
@@ -62,6 +64,7 @@ jobs:
             while [ "$page" -le "$MAX_TAG_PAGES" ]; do
               TAGS_RESP=$(curl -fsSL --max-time 15 \
                 -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
                 "https://api.github.com/repos/openclaw/openclaw/tags?per_page=100&page=${page}" 2>&1) || true
               if [ -z "$TAGS_RESP" ]; then
                 echo "  WARNING: GitHub tags API returned an empty response"
