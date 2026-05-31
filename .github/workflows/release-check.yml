@@ -84,13 +84,13 @@ jobs:
           for i in $(seq 1 $MAX_ATTEMPTS); do
             echo "  [attempt $i/$MAX_ATTEMPTS] querying Docker Hub tags API ..."
             TAGS_RESP=$(curl -sS --max-time 15 \
-              "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20" 2>&1) || true
+              "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20&ordering=last_updated" 2>&1) || true
             HTTP_CODE=$(echo "$TAGS_RESP" | jq -r '.detail // empty' 2>/dev/null || echo "")
             if [ -n "$HTTP_CODE" ]; then
               echo "  WARNING: API returned error: $HTTP_CODE"
             fi
             upstream_version=$(echo "$TAGS_RESP" | jq -r \
-              '[.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.tag_last_pushed) | last | .name // empty' 2>/dev/null || echo "")
+              '.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) | .name' 2>/dev/null | head -n1 || echo "")
             if [ -n "$upstream_version" ]; then
               echo "  Found upstream version: $upstream_version"
               break
