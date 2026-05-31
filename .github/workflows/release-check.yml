@@ -85,7 +85,8 @@ jobs:
             echo "  [attempt $i/$MAX_ATTEMPTS] querying Docker Hub tags API ..."
             upstream_version=""
             page=1
-            while [ "$page" -le 10 ]; do
+            MAX_TAG_PAGES=10 # 10 * 100 = 1000 tags max scanned to find the latest stable tag
+            while [ "$page" -le "$MAX_TAG_PAGES" ]; do
               TAGS_RESP=$(curl -sS --max-time 15 \
                 "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=100&page=${page}&ordering=-last_updated" 2>&1) || true
               HTTP_CODE=$(echo "$TAGS_RESP" | jq -r '.detail // empty' 2>/dev/null || echo "")
