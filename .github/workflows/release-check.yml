@@ -32,7 +32,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     outputs:
-      proceed: ${{ steps.decide.outputs.proceed 
+      proceed: ${{ steps.decide.outputs.proceed }}
       version: ${{ steps.version.outputs.version }}
       current_digest: ${{ steps.check.outputs.current_digest }}
       upstream_version: ${{ steps.check.outputs.upstream_version }}
