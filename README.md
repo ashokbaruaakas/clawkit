@@ -31,12 +31,12 @@ The container will pull the latest `ghcr.io/ashokbaruaakas/clawkit` image and st
 
 This project provides a **GitHub Actions workflow** (`release-check.yml`) that:
 
-1. **Checks daily** at midnight UTC for new `alpine/openclaw:latest` image releases
+1. **Checks daily** at midnight UTC for the latest stable OpenClaw release
 2. **Compares the image digest** against the last known digest (stored in GHA cache)
 3. **If upstream changed**: builds a new clawkit image, pushes to GHCR, creates a GitHub Release
 4. **Can be triggered manually** with `force_release` and `release_type` inputs
 
-The Docker image is based on `alpine/openclaw:latest` and adds:
+The Docker image is based on the resolved stable `ghcr.io/openclaw/openclaw:<version>` image and adds:
 - **Linuxbrew** (Homebrew for Linux) installed for the `node` user
 - Development tools: `build-essential`, `git`, `curl`, `openssh-client`, `sudo`, `vim`
 - Global npm installs configured for non-root user
