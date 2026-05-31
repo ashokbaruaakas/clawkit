@@ -83,14 +83,31 @@ jobs:
           echo "::group::Fetch upstream version tags"
           for i in $(seq 1 $MAX_ATTEMPTS); do
             echo "  [attempt $i/$MAX_ATTEMPTS] querying Docker Hub tags API ..."
-            TAGS_RESP=$(curl -sS --max-time 15 \
-              "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=20" 2>&1) || true
-            HTTP_CODE=$(echo "$TAGS_RESP" | jq -r '.detail // empty' 2>/dev/null || echo "")
-            if [ -n "$HTTP_CODE" ]; then
-              echo "  WARNING: API returned error: $HTTP_CODE"
-            fi
-            upstream_version=$(echo "$TAGS_RESP" | jq -r \
-              '[.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.tag_last_pushed) | last | .name // empty' 2>/dev/null || echo "")
+            upstream_version=""
+            page=1
+            MAX_TAG_PAGES=10 # 10 * 100 = 1000 tags max scanned to find the latest stable tag
+            while [ "$page" -le "$MAX_TAG_PAGES" ]; do
+              TAGS_RESP=$(curl -sS --max-time 15 \
+                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=100&page=${page}&ordering=-last_updated" 2>&1) || true
+              HTTP_CODE=$(echo "$TAGS_RESP" | jq -r '.detail // empty' 2>/dev/null || echo "")
+              if [ -n "$HTTP_CODE" ]; then
+                echo "  WARNING: API returned error: $HTTP_CODE"
+                break
+              fi
+
+              upstream_version=$(echo "$TAGS_RESP" | jq -r \
+                '.results[] | .name | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' 2>/dev/null | head -n1 || echo "")
+              if [ -n "$upstream_version" ]; then
+                echo "  Found stable version on page $page: $upstream_version"
+                break
+              fi
+
+              HAS_NEXT=$(echo "$TAGS_RESP" | jq -r '.next // empty' 2>/dev/null || echo "")
+              if [ -z "$HAS_NEXT" ]; then
+                break
+              fi
+              page=$((page + 1))
+            done
             if [ -n "$upstream_version" ]; then
               echo "  Found upstream version: $upstream_version"
               break
