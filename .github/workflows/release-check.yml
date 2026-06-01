@@ -31,6 +31,9 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      OPENCLAW_REPO: openclaw/openclaw
+      OPENCLAW_IMAGE_REPOSITORY: ghcr.io/openclaw/openclaw
     outputs:
       proceed: ${{ steps.decide.outputs.proceed }}
       version: ${{ steps.version.outputs.version }}
@@ -47,63 +50,39 @@ jobs:
 
       - name: Fetch upstream info
         id: check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           MAX_ATTEMPTS=3
           DELAY=5
           current_digest=""
           upstream_version=""
+          upstream_image=""
 
-          echo "::group::Pull image manifest and extract digest"
+          echo "::group::Fetch latest stable OpenClaw version"
           for i in $(seq 1 $MAX_ATTEMPTS); do
-            echo "  [attempt $i/$MAX_ATTEMPTS] docker pull alpine/openclaw:latest --platform linux/amd64 ..."
-            PULL_OUTPUT=$(docker pull alpine/openclaw:latest --platform linux/amd64 -q 2>&1) || {
-              echo "  WARNING: docker pull exited with code $?"
-              echo "  Pull output: $PULL_OUTPUT"
-              [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
-              continue
-            }
-            echo "  Pull succeeded, extracting digest from RepoDigests..."
-            current_digest=$(docker image inspect alpine/openclaw:latest --format '{{index .RepoDigests 0}}' 2>&1 | awk -F'@' '{print $2}' || echo "")
-            if [ -n "$current_digest" ]; then
-              echo "  Digest obtained: ${current_digest:0:19}..."
-              break
-            fi
-            echo "  WARNING: Digest extraction returned empty"
-            [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
-          done
-          echo "::endgroup::"
-
-          if [ -z "$current_digest" ]; then
-            echo "::error::Failed to fetch upstream digest after $MAX_ATTEMPTS attempts"
-            exit 1
-          fi
-          echo "current_digest=$current_digest" >> "$GITHUB_OUTPUT"
-          echo "OUTPUT current_digest=${current_digest:0:19}..."
-
-          echo "::group::Fetch upstream version tags"
-          for i in $(seq 1 $MAX_ATTEMPTS); do
-            echo "  [attempt $i/$MAX_ATTEMPTS] querying Docker Hub tags API ..."
             upstream_version=""
             page=1
             MAX_TAG_PAGES=10 # 10 * 100 = 1000 tags max scanned to find the latest stable tag
             while [ "$page" -le "$MAX_TAG_PAGES" ]; do
-              TAGS_RESP=$(curl -sS --max-time 15 \
-                "https://hub.docker.com/v2/repositories/alpine/openclaw/tags?page_size=100&page=${page}&ordering=-last_updated" 2>&1) || true
-              HTTP_CODE=$(echo "$TAGS_RESP" | jq -r '.detail // empty' 2>/dev/null || echo "")
-              if [ -n "$HTTP_CODE" ]; then
-                echo "  WARNING: API returned error: $HTTP_CODE"
+              TAGS_RESP=$(curl -fsSL --max-time 15 \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                "https://api.github.com/repos/${OPENCLAW_REPO}/tags?per_page=100&page=${page}" 2>&1) || true
+              if [ -z "$TAGS_RESP" ]; then
+                echo "  WARNING: GitHub tags API returned an empty response"
                 break
               fi
 
               upstream_version=$(echo "$TAGS_RESP" | jq -r \
-                '.results[] | .name | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))' 2>/dev/null | head -n1 || echo "")
+                '.[] | .name | select(test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")) | sub("^v"; "")' 2>/dev/null | head -n1 || echo "")
               if [ -n "$upstream_version" ]; then
                 echo "  Found stable version on page $page: $upstream_version"
                 break
               fi
 
-              HAS_NEXT=$(echo "$TAGS_RESP" | jq -r '.next // empty' 2>/dev/null || echo "")
-              if [ -z "$HAS_NEXT" ]; then
+              TAG_COUNT=$(echo "$TAGS_RESP" | jq 'length' 2>/dev/null || echo 0)
+              if [ "$TAG_COUNT" -lt 100 ]; then
                 break
               fi
               page=$((page + 1))
@@ -116,13 +95,42 @@ jobs:
             [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
           done
           if [ -z "$upstream_version" ]; then
-            echo "  WARNING: No stable version tag found, using today's date as fallback"
-            upstream_version=$(date +%Y%m%d)
+            echo "::error::Failed to resolve the latest stable OpenClaw version after $MAX_ATTEMPTS attempts"
+            exit 1
           fi
+          upstream_image="${OPENCLAW_IMAGE_REPOSITORY}:${upstream_version}"
           echo "  Final upstream_version=$upstream_version"
+          echo "  Stable upstream image=$upstream_image"
           echo "::endgroup::"
           echo "upstream_version=$upstream_version" >> "$GITHUB_OUTPUT"
           echo "OUTPUT upstream_version=$upstream_version"
+
+          echo "::group::Pull stable image manifest and extract digest"
+          for i in $(seq 1 $MAX_ATTEMPTS); do
+            echo "  [attempt $i/$MAX_ATTEMPTS] docker pull ${upstream_image} --platform linux/amd64 ..."
+            PULL_OUTPUT=$(docker pull "${upstream_image}" --platform linux/amd64 -q 2>&1) || {
+              echo "  WARNING: docker pull exited with code $?"
+              echo "  Pull output: $PULL_OUTPUT"
+              [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
+              continue
+            }
+            echo "  Pull succeeded, extracting digest from RepoDigests..."
+            current_digest=$(docker image inspect "${upstream_image}" --format '{{index .RepoDigests 0}}' 2>&1 | awk -F'@' '{print $2}' || echo "")
+            if [ -n "$current_digest" ]; then
+              echo "  Digest obtained: ${current_digest:0:19}..."
+              break
+            fi
+            echo "  WARNING: Digest extraction returned empty"
+            [ "$i" -lt "$MAX_ATTEMPTS" ] && sleep "$DELAY"
+          done
+          echo "::endgroup::"
+
+          if [ -z "$current_digest" ]; then
+            echo "::error::Failed to fetch the stable upstream digest after $MAX_ATTEMPTS attempts"
+            exit 1
+          fi
+          echo "current_digest=$current_digest" >> "$GITHUB_OUTPUT"
+          echo "OUTPUT current_digest=${current_digest:0:19}..."
 
       - name: Write current upstream state (unconditional)
         run: |
@@ -247,6 +255,8 @@ jobs:
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ steps.version.outputs.version }}
             ghcr.io/${{ github.repository }}:openclaw-${{ steps.check.outputs.upstream_version }}
+          build-args: |
+            OPENCLAW_IMAGE=${{ env.OPENCLAW_IMAGE_REPOSITORY }}@${{ steps.check.outputs.current_digest }}
           labels: |
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -308,7 +318,7 @@ jobs:
               echo "**OpenClaw upstream updated** -> \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)" >> "$NOTES_FILE"
             fi
             echo "" >> "$NOTES_FILE"
-            echo "**Clawkit image** \`${VERSION}\` based on \`alpine/openclaw:${UPSTREAM}\`" >> "$NOTES_FILE"
+            echo "**Clawkit image** \`${VERSION}\` based on \`${OPENCLAW_IMAGE_REPOSITORY}:${UPSTREAM}\`" >> "$NOTES_FILE"
             echo "" >> "$NOTES_FILE"
             echo "_Auto-generated by clawkit release workflow_" >> "$NOTES_FILE"
 
