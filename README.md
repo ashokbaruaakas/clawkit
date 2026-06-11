@@ -1,6 +1,12 @@
 # Clawkit
 
-A wrapper image around [OpenClaw](https://hub.docker.com/r/alpine/openclaw) that adds **Linuxbrew** and other development tools, published to GHCR for easy consumption via Docker Compose.
+A wrapper image around OpenClaw that adds Linuxbrew and development tooling, published to GHCR for easy use with Docker Compose.
+
+## Prerequisites
+
+- Docker Engine with Docker Compose support
+- Git
+- Network access to pull images from GHCR
 
 ## Quick Start
 
@@ -11,59 +17,97 @@ cd clawkit
 
 # 2. Copy the environment file
 cp .env.example .env
-# Edit .env with your API keys (see comments in the file)
+# Edit .env with at least one LLM provider API key
 
 # 3. Start the container
 docker compose -f example-docker-compose.yml up -d
 ```
 
-The container will pull the latest `ghcr.io/ashokbaruaakas/clawkit` image and start OpenClaw with Linuxbrew available.
+Default behavior:
+
+- Pulls `ghcr.io/ashokbaruaakas/clawkit:latest`
+- Binds to `127.0.0.1:${PORT}` (default `18789`)
+- Persists `/home/node` and `/home/linuxbrew/.linuxbrew` via named volumes
+
+## Configuration
+
+All variables are documented in [.env.example](.env.example).
+
+Common variables:
+
+- `CONTAINER_NAME`: container name in Docker
+- `IMAGE_NAME`: image repository to pull from
+- `IMAGE_TAG`: image tag to use (defaults to `latest`)
+- `PORT`: local bind and service port (default `18789`)
+
+OpenClaw runtime:
+
+- `OPENCLAW_GATEWAY_TOKEN`: gateway authentication token
+- `OPENCLAW_NO_RESPAWN`: when set to `1`, disables automatic respawn behavior
+- `NODE_COMPILE_CACHE`: compile cache directory path
+
+LLM providers (set at least one):
+
+- `DEEPSEEK_API_KEY`
+- `GEMINI_API_KEY`
+- `OPENROUTER_API_KEY`
+
+Optional integrations:
+
+- `DISCORD_BOT_TOKEN`
+- `NOTION_API_KEY`
 
 ## Image Tags
 
-| Tag | Example | Description |
-|---|---|---|
-| `latest` | `ghcr.io/ashokbaruaakas/clawkit:latest` | Latest release |
-| `v0.0.N` | `ghcr.io/ashokbaruaakas/clawkit:v0.0.6` | Specific clawkit version (semver) |
+| Tag              | Example                                             | Description                        |
+| ---------------- | --------------------------------------------------- | ---------------------------------- |
+| `latest`         | `ghcr.io/ashokbaruaakas/clawkit:latest`             | Latest release                     |
+| `v0.0.N`         | `ghcr.io/ashokbaruaakas/clawkit:v0.0.6`             | Specific clawkit version (semver)  |
 | `openclaw-<ver>` | `ghcr.io/ashokbaruaakas/clawkit:openclaw-2026.5.19` | Specific OpenClaw upstream version |
 
-## How It Works
+## Image Contents
 
-This project provides a **GitHub Actions workflow** (`release-check.yml`) that:
+The published image is built from a digest-pinned stable OpenClaw base selected by the release workflow.
 
-1. **Checks daily** at midnight UTC for the latest stable OpenClaw release
-2. **Compares the image digest** against the last known digest (stored in GHA cache)
-3. **If upstream changed**: builds a new clawkit image, pushes to GHCR, creates a GitHub Release
-4. **Can be triggered manually** with `force_release` and `release_type` inputs
+Note:
 
-The Docker image is based on the resolved stable `ghcr.io/openclaw/openclaw:<version>` image and adds:
-- **Linuxbrew** (Homebrew for Linux) installed for the `node` user
-- Development tools: `build-essential`, `git`, `curl`, `openssh-client`, `sudo`, `vim`
-- Global npm installs configured for non-root user
-- Node compile cache directory pre-configured
+- Workflow releases pin `OPENCLAW_IMAGE` to a resolved upstream digest.
+- Local Dockerfile builds use the default floating base `ghcr.io/openclaw/openclaw:latest` unless you override `OPENCLAW_IMAGE`.
 
-## Environment Variables
+This image adds:
 
-See [`.env.example`](.env.example) for all available configuration.
+- Linuxbrew installed under `/home/linuxbrew/.linuxbrew` for the `node` user
+- Development packages: `build-essential`, `ca-certificates`, `curl`, `file`, `git`, `openssh-client`, `procps`, `sudo`, `vim`
+- Global npm install path configured for non-root use (`/home/node/.npm-global`)
+- Node compile cache directory pre-created (`/home/node/.cache/node-compile-cache`)
 
-Key variables:
-- `OPENCLAW_GATEWAY_TOKEN` — Gateway authentication token
-- `DEEPSEEK_API_KEY` — DeepSeek LLM provider key
-- `GEMINI_API_KEY` — Google Gemini API key
-- `OPENROUTER_API_KEY` — OpenRouter API key
-- `DISCORD_BOT_TOKEN` — Discord bot token (optional)
-- `NOTION_API_KEY` — Notion integration token (optional)
+## Release and Update Strategy
 
-## Releasing
+This project uses the GitHub Actions workflow `.github/workflows/release-check.yml`.
 
-This project uses automated releases via GitHub Actions:
+Automated behavior:
 
-- **Automated**: Runs daily at midnight UTC, checks for upstream OpenClaw changes
-- **Manual**: Use the `release-check.yml` workflow with `force_release=true` or set `release_type` to `code_update` or `emergency`
-- **Emergency**: Use the manual `Create Release` workflow for tag-only releases
+- Runs daily at `00:00 UTC`
+- Resolves latest stable OpenClaw version and digest
+- Compares with cached upstream state
+- Builds and releases only when upstream stable version changed (or on first run)
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+Manual behavior (`workflow_dispatch`):
+
+- `change_type=patch|minor|major`: controls semantic version bump for manual releases
+- `force_release=true`: build and release even when upstream stable version is unchanged/already released
+- On first run (no cached state), an initial release is created
+
+Published tags per release:
+
+- `latest`
+- `v0.0.N`
+- `openclaw-<upstream-version>`
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+This project is licensed under the [MIT License](LICENSE).

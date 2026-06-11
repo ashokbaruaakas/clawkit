@@ -1,0 +1,7 @@
+.git/
+.github/
+*.md
+.env
+.env.*
+!.env.example
+.DS_Store
