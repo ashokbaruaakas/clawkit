@@ -9,6 +9,7 @@
 *.md text eol=lf
 *.json text eol=lf
 *.env.example text eol=lf
+.dockerignore text eol=lf
 Dockerfile text eol=lf
 
 # Binary files

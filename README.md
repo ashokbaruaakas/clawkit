@@ -108,6 +108,10 @@ Published tags per release:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## AI Context
+
+For AI-session handoff and repository operating rules, see [AGENTS.md](AGENTS.md).
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).

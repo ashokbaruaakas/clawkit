@@ -114,8 +114,8 @@ Before requesting review, verify all applicable items:
 Releases are automated by [.github/workflows/release-check.yml](.github/workflows/release-check.yml).
 
 - The scheduled run checks upstream OpenClaw changes daily and releases when needed.
-- Manual runs can set `force_release` and `release_type` (`auto`, `code_update`, `emergency`).
-- Use emergency labeling only with maintainer approval.
+- Manual runs can set `force_release` and `change_type` (`patch`, `minor`, `major`).
+- If upstream stable version is unchanged and `force_release=false`, the workflow skips release.
 
 ---
 
