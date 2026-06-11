@@ -67,7 +67,14 @@ Optional integrations:
 
 ## Image Contents
 
-The image is built from a pinned stable `ghcr.io/openclaw/openclaw:<version>` base and adds:
+The published image is built from a digest-pinned stable OpenClaw base selected by the release workflow.
+
+Note:
+
+- Workflow releases pin `OPENCLAW_IMAGE` to a resolved upstream digest.
+- Local Dockerfile builds use the default floating base `ghcr.io/openclaw/openclaw:latest` unless you override `OPENCLAW_IMAGE`.
+
+This image adds:
 
 - Linuxbrew installed under `/home/linuxbrew/.linuxbrew` for the `node` user
 - Development packages: `build-essential`, `ca-certificates`, `curl`, `file`, `git`, `openssh-client`, `procps`, `sudo`, `vim`
