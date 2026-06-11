@@ -2,23 +2,23 @@ name: Check Upstream and Release
 
 on:
   schedule:
-    - cron: '0 0 * * *'          # daily at midnight UTC
+    - cron: "0 0 * * *" # daily at midnight UTC
   workflow_dispatch:
     inputs:
       force_release:
-        description: 'Build & release even if upstream is unchanged'
+        description: "Build & release even if upstream stable version is unchanged/already released"
         required: false
         type: boolean
         default: false
-      release_type:
-        description: 'Type of change (affects release notes)'
+      change_type:
+        description: "Semver bump type for manual releases"
         required: false
         type: choice
         options:
-          - auto
-          - code_update
-          - emergency
-        default: auto
+          - patch
+          - minor
+          - major
+        default: patch
 
 concurrency:
   group: release-check-${{ github.ref }}
@@ -37,6 +37,7 @@ jobs:
     outputs:
       proceed: ${{ steps.decide.outputs.proceed }}
       version: ${{ steps.version.outputs.version }}
+      bump_type: ${{ steps.version.outputs.bump_type }}
       current_digest: ${{ steps.check.outputs.current_digest }}
       upstream_version: ${{ steps.check.outputs.upstream_version }}
       prev_digest: ${{ steps.decide.outputs.prev_digest }}
@@ -132,78 +133,83 @@ jobs:
           echo "current_digest=$current_digest" >> "$GITHUB_OUTPUT"
           echo "OUTPUT current_digest=${current_digest:0:19}..."
 
-      - name: Write current upstream state (unconditional)
-        run: |
-          echo "Writing current state to /tmp/upstream-state.json"
-          echo "  digest:  ${{ steps.check.outputs.current_digest }}"
-          echo "  version: ${{ steps.check.outputs.upstream_version }}"
-          jq -n \
-            --arg digest "${{ steps.check.outputs.current_digest }}" \
-            --arg version "${{ steps.check.outputs.upstream_version }}" \
-            '{digest: $digest, version: $version}' \
-            > /tmp/upstream-state.json
-          echo "Written: $(cat /tmp/upstream-state.json)"
-
       - name: Restore cached upstream state
         id: cache-restore
         uses: actions/cache/restore@v5
         with:
           path: /tmp/upstream-state.json
-          key: last-upstream-state
+          key: upstream-state-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            upstream-state-${{ github.ref_name }}-
+            upstream-state-
 
       - name: Decide whether to proceed
         id: decide
         run: |
           echo "::group::Decision logic"
+          current_version="${{ steps.check.outputs.upstream_version }}"
           current_digest="${{ steps.check.outputs.current_digest }}"
+          is_manual="${{ github.event_name == 'workflow_dispatch' && 'true' || 'false' }}"
           force="${{ github.event.inputs.force_release == 'true' && 'true' || 'false' }}"
 
+          echo "  Current version: $current_version"
           echo "  Current digest: ${current_digest:0:19}..."
+          echo "  Is manual run:  $is_manual"
           echo "  Force release:  $force"
+          echo "  Cache hit:      ${{ steps.cache-restore.outputs.cache-hit || 'false' }}"
 
-          # Check if cache file exists (restored or written unconditionally)
+          cached_version=""
+          cached_digest=""
+
+          # Check if a previously saved upstream state was restored
           if [ -f /tmp/upstream-state.json ]; then
-            cached_digest=$(jq -r '.digest' /tmp/upstream-state.json)
-            cached_version=$(jq -r '.version' /tmp/upstream-state.json)
+            cached_digest=$(jq -r '.digest // ""' /tmp/upstream-state.json)
+            cached_version=$(jq -r '.version // ""' /tmp/upstream-state.json)
             echo "  Cache file found:"
             echo "    cached_digest:  ${cached_digest:0:19}..."
             echo "    cached_version: $cached_version"
           else
-            cached_digest=""
-            cached_version=""
             echo "  Cache file NOT found (first run or cache restore missed)"
           fi
 
-          # Force release -> always proceed
-          if [ "$force" = "true" ]; then
+          echo "prev_digest=$cached_digest" >> "$GITHUB_OUTPUT"
+          echo "prev_version=$cached_version" >> "$GITHUB_OUTPUT"
+
+          # Manual force release -> always proceed
+          if [ "$is_manual" = "true" ] && [ "$force" = "true" ]; then
             echo "  Decision: FORCE RELEASE (manual override)"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=force" >> "$GITHUB_OUTPUT"
+            echo "::notice::release-check decision=force proceed=true current_version=${current_version} cached_version=${cached_version:-none}"
             echo "::endgroup::"
             exit 0
           fi
 
-          # First run (no cache) -> proceed
-          if [ -z "$cached_digest" ]; then
+          # First run (no cached upstream version) -> proceed
+          if [ -z "$cached_version" ]; then
             echo "  Decision: FIRST RUN - proceeding with initial release"
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=first_run" >> "$GITHUB_OUTPUT"
+            echo "::notice::release-check decision=first_run proceed=true current_version=${current_version}"
             echo "::endgroup::"
             exit 0
           fi
 
-          # Compare digests
-          if [ "$current_digest" = "$cached_digest" ]; then
-            echo "  Decision: UNCHANGED - upstream digest matches cached value"
+          # Compare upstream stable versions (primary trigger)
+          if [ "$current_version" = "$cached_version" ]; then
+            echo "  Decision: UNCHANGED - upstream stable version matches cached value"
             echo "  No release needed."
             echo "proceed=false" >> "$GITHUB_OUTPUT"
             echo "reason=unchanged" >> "$GITHUB_OUTPUT"
+            echo "::notice::release-check decision=unchanged proceed=false current_version=${current_version} cached_version=${cached_version}"
           else
-            echo "  Decision: UPDATED - upstream digest has changed"
-            echo "  Old: ${cached_digest:0:19}..."
-            echo "  New: ${current_digest:0:19}..."
+            echo "  Decision: UPDATED - upstream stable version has changed"
+            echo "  Old version: $cached_version"
+            echo "  New version: $current_version"
+            echo "  New digest:  ${current_digest:0:19}..."
             echo "proceed=true" >> "$GITHUB_OUTPUT"
             echo "reason=updated" >> "$GITHUB_OUTPUT"
+            echo "::notice::release-check decision=updated proceed=true old_version=${cached_version} new_version=${current_version}"
           fi
           echo "::endgroup::"
 
@@ -212,6 +218,12 @@ jobs:
         if: steps.decide.outputs.proceed == 'true'
         run: |
           echo "::group::Determine next version"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            bump_type="${{ github.event.inputs.change_type || 'patch' }}"
+          else
+            bump_type="patch"
+          fi
+
           latest_tag=$(git tag --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
           if [ -z "$latest_tag" ]; then
             echo "  No existing tags found, starting from v0.0.0"
@@ -219,12 +231,35 @@ jobs:
           else
             echo "  Latest tag: $latest_tag"
           fi
+
+          echo "  Bump type: $bump_type"
           major=$(echo "$latest_tag" | cut -d. -f1 | tr -d v)
           minor=$(echo "$latest_tag" | cut -d. -f2)
           patch=$(echo "$latest_tag" | cut -d. -f3)
-          new_patch=$((patch + 1))
-          echo "  Next version: v${major}.${minor}.${new_patch}"
-          echo "version=v${major}.${minor}.${new_patch}" >> "$GITHUB_OUTPUT"
+
+          case "$bump_type" in
+            patch)
+              patch=$((patch + 1))
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            *)
+              echo "::warning::Unknown change_type '$bump_type', defaulting to patch"
+              patch=$((patch + 1))
+              bump_type="patch"
+              ;;
+          esac
+
+          echo "bump_type=$bump_type" >> "$GITHUB_OUTPUT"
+          echo "  Next version: v${major}.${minor}.${patch}"
+          echo "version=v${major}.${minor}.${patch}" >> "$GITHUB_OUTPUT"
           echo "::endgroup::"
 
       - name: Set up QEMU
@@ -244,6 +279,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image
+        id: build_push
         if: steps.decide.outputs.proceed == 'true'
         uses: docker/build-push-action@v7
         with:
@@ -266,6 +302,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Create git tag
+        id: create_tag
         if: steps.decide.outputs.proceed == 'true'
         run: |
           echo "::group::Create git tag"
@@ -285,6 +322,7 @@ jobs:
           echo "::endgroup::"
 
       - name: Create GitHub Release
+        id: create_release
         if: steps.decide.outputs.proceed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -296,10 +334,11 @@ jobs:
           PREV_VERSION="${{ steps.decide.outputs.prev_version }}"
           PREV_DIGEST="${{ steps.decide.outputs.prev_digest }}"
           REASON="${{ steps.decide.outputs.reason }}"
-          RELEASE_TYPE="${{ github.event.inputs.release_type || 'auto' }}"
+          BUMP_TYPE="${{ steps.version.outputs.bump_type }}"
 
           echo "  Version: $VERSION"
           echo "  Reason:  $REASON"
+          echo "  Bump:    $BUMP_TYPE"
 
           SHORT_DIGEST=$(echo "$DIGEST" | head -c 19)
           SHORT_PREV=$(echo "$PREV_DIGEST" | head -c 19)
@@ -333,44 +372,85 @@ jobs:
             echo "_Auto-generated by clawkit release workflow_" >> "$NOTES_FILE"
 
           else
-            echo "  Type: manual force ($RELEASE_TYPE)"
+            echo "  Type: manual force"
             echo "## What's Changed" > "$NOTES_FILE"
             echo "" >> "$NOTES_FILE"
-            case "$RELEASE_TYPE" in
-              code_update)
-                echo "**Clawkit code update** -- \`${VERSION}\`" >> "$NOTES_FILE"
-                echo "  - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)" >> "$NOTES_FILE"
-                ;;
-              emergency)
-                echo "**Emergency release** -- \`${VERSION}\`" >> "$NOTES_FILE"
-                echo "  - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)" >> "$NOTES_FILE"
-                ;;
-              *)
-                echo "**Manual force release** -- \`${VERSION}\`" >> "$NOTES_FILE"
-                echo "  - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)" >> "$NOTES_FILE"
-                echo "  - No upstream change detected -- release was forced" >> "$NOTES_FILE"
-                ;;
-            esac
+            echo "**Manual force release** -- \`${VERSION}\`" >> "$NOTES_FILE"
+            echo "  - Semver bump: \`${BUMP_TYPE}\`" >> "$NOTES_FILE"
+            echo "  - OpenClaw upstream: \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)" >> "$NOTES_FILE"
+            echo "  - No upstream version change detected -- release was forced" >> "$NOTES_FILE"
             echo "" >> "$NOTES_FILE"
             echo "_Triggered manually | Auto-generated by clawkit release workflow_" >> "$NOTES_FILE"
           fi
 
           echo "  Creating release on GitHub..."
-          gh release create "$VERSION" \
+          release_url=$(gh release create "$VERSION" \
             --title "$VERSION" \
-            --notes-file "$NOTES_FILE"
-          echo "  Release created"
+            --notes-file "$NOTES_FILE")
+          echo "release_url=$release_url" >> "$GITHUB_OUTPUT"
+          echo "  Release created: $release_url"
           echo "::endgroup::"
 
+      - name: Write current upstream state
+        id: write_state
+        if: steps.decide.outputs.proceed == 'true'
+        run: |
+          echo "Writing current state to /tmp/upstream-state.json"
+          echo "  digest:  ${{ steps.check.outputs.current_digest }}"
+          echo "  version: ${{ steps.check.outputs.upstream_version }}"
+          jq -n \
+            --arg digest "${{ steps.check.outputs.current_digest }}" \
+            --arg version "${{ steps.check.outputs.upstream_version }}" \
+            '{digest: $digest, version: $version}' \
+            > /tmp/upstream-state.json
+          echo "Written: $(cat /tmp/upstream-state.json)"
+
       - name: Save upstream state to cache
+        id: save_state
+        if: steps.decide.outputs.proceed == 'true'
         uses: actions/cache/save@v5
         with:
           path: /tmp/upstream-state.json
-          key: last-upstream-state
+          key: upstream-state-${{ github.ref_name }}-${{ github.run_id }}
       - name: Log cached state
         if: steps.decide.outputs.proceed == 'true'
         run: |
           echo "::group::Save upstream state to cache"
-          echo "  Caching /tmp/upstream-state.json as 'last-upstream-state'"
+          echo "  Caching /tmp/upstream-state.json as 'upstream-state-${{ github.ref_name }}-${{ github.run_id }}'"
           echo "  Contents: $(cat /tmp/upstream-state.json 2>/dev/null || echo 'file not found')"
           echo "::endgroup::"
+
+      - name: Publish workflow summary
+        if: always()
+        run: |
+          {
+            echo "## Release Check Summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Event | ${{ github.event_name }} |"
+            echo "| Branch | ${{ github.ref_name }} |"
+            echo "| Upstream version | ${{ steps.check.outputs.upstream_version }} |"
+            echo "| Previous version | ${{ steps.decide.outputs.prev_version || 'n/a' }} |"
+            echo "| Decision reason | ${{ steps.decide.outputs.reason }} |"
+            echo "| Proceed | ${{ steps.decide.outputs.proceed }} |"
+            echo "| Force release input | ${{ github.event.inputs.force_release || 'false' }} |"
+            echo "| Manual change type | ${{ github.event.inputs.change_type || 'patch' }} |"
+            echo "| Next clawkit version | ${{ steps.version.outputs.version || 'n/a' }} |"
+            echo "| Bump type used | ${{ steps.version.outputs.bump_type || 'n/a' }} |"
+            echo ""
+
+            if [ "${{ steps.decide.outputs.proceed }}" = "true" ]; then
+              echo "### Execution"
+              echo "- Build/push step: ${{ steps.build_push.conclusion || 'n/a' }}"
+              echo "- Create tag step: ${{ steps.create_tag.conclusion || 'n/a' }}"
+              echo "- Create release step: ${{ steps.create_release.conclusion || 'n/a' }}"
+              echo "- Save state step: ${{ steps.save_state.conclusion || 'n/a' }}"
+              if [ -n "${{ steps.create_release.outputs.release_url }}" ]; then
+                echo "- Release URL: ${{ steps.create_release.outputs.release_url }}"
+              fi
+            else
+              echo "### Execution"
+              echo "- No build/tag/release steps were run because decision was skip."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

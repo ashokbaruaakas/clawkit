@@ -90,12 +90,12 @@ Automated behavior:
 - Runs daily at `00:00 UTC`
 - Resolves latest stable OpenClaw version and digest
 - Compares with cached upstream state
-- Builds and releases only when upstream changed (or on first run)
+- Builds and releases only when upstream stable version changed (or on first run)
 
 Manual behavior (`workflow_dispatch`):
 
-- `force_release=true`: always build and release
-- `release_type=auto|code_update|emergency`: controls release notes labeling for manual runs
+- `change_type=patch|minor|major`: controls semantic version bump for manual releases
+- `force_release=true`: build and release even when upstream stable version is unchanged/already released
 - On first run (no cached state), an initial release is created
 
 Published tags per release:
