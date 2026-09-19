@@ -26,7 +26,7 @@ docker compose -f example-docker-compose.yml up -d
 Default behavior:
 
 - Pulls `ghcr.io/ashokbaruaakas/clawkit:latest`
-- Binds to `127.0.0.1:${PORT}` (default `18789`)
+- Publishes the gateway on host port `127.0.0.1:${PORT}` (default `18789`); the gateway itself always listens on `18789` inside the container
 - Persists `/home/node` and `/home/linuxbrew/.linuxbrew` via named volumes
 
 ## Configuration
@@ -38,11 +38,11 @@ Common variables:
 - `CONTAINER_NAME`: container name in Docker
 - `IMAGE_NAME`: image repository to pull from
 - `IMAGE_TAG`: image tag to use (defaults to `latest`)
-- `PORT`: local bind and service port (default `18789`)
+- `PORT`: host port to publish the gateway on (default `18789`); the container port stays `18789`
 
 OpenClaw runtime:
 
-- `OPENCLAW_GATEWAY_TOKEN`: gateway authentication token
+- `OPENCLAW_GATEWAY_TOKEN`: (required) gateway authentication token; the Gateway will not authenticate without it
 - `OPENCLAW_NO_RESPAWN`: when set to `1`, disables automatic respawn behavior
 - `NODE_COMPILE_CACHE`: compile cache directory path
 
@@ -65,6 +65,10 @@ Optional integrations:
 | `v0.0.N`         | `ghcr.io/ashokbaruaakas/clawkit:v0.0.6`             | Specific clawkit version (semver)  |
 | `openclaw-<ver>` | `ghcr.io/ashokbaruaakas/clawkit:openclaw-2026.5.19` | Specific OpenClaw upstream version |
 
+For production, pin `IMAGE_TAG` to a specific `openclaw-<ver>` tag rather than
+`latest` so upgrades are reproducible and reversible. `latest` always tracks the
+newest release and can change underneath you between pulls.
+
 ## Image Contents
 
 The published image is built from a digest-pinned stable OpenClaw base selected by the release workflow.
@@ -80,6 +84,11 @@ This image adds:
 - Development packages: `build-essential`, `ca-certificates`, `curl`, `file`, `git`, `openssh-client`, `procps`, `sudo`, `vim`
 - Global npm install path configured for non-root use (`/home/node/.npm-global`)
 - Node compile cache directory pre-created (`/home/node/.cache/node-compile-cache`)
+
+Note: the `linuxbrew-prefix` volume is seeded from the image on first run and is
+not refreshed by image upgrades. Linuxbrew itself (and any brew-installed
+packages) persist in the volume, so run `brew update && brew upgrade` inside the
+container when you need newer formulae.
 
 ## Release and Update Strategy
 
@@ -97,6 +106,10 @@ Manual behavior (`workflow_dispatch`):
 - `change_type=patch|minor|major`: controls semantic version bump for manual releases
 - `force_release=true`: build and release even when upstream stable version is unchanged/already released
 - On first run (no cached state), an initial release is created
+
+The automatic release trigger compares the upstream stable **version string**, not
+the image digest. If OpenClaw republishes the same version under a new digest, the
+workflow skips it; use a manual `force_release` run to pick up such a republish.
 
 Published tags per release:
 

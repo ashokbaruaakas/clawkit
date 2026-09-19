@@ -3,9 +3,8 @@ services:
     image: ${IMAGE_NAME}:${IMAGE_TAG:-latest}
     container_name: "${CONTAINER_NAME}"
     pull_policy: always
-    init: true
     ports:
-      - "127.0.0.1:${PORT}:${PORT}"
+      - "127.0.0.1:${PORT}:18789"
     env_file:
       - .env
     restart: unless-stopped
