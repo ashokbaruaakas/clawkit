@@ -133,16 +133,6 @@ jobs:
           echo "current_digest=$current_digest" >> "$GITHUB_OUTPUT"
           echo "OUTPUT current_digest=${current_digest:0:19}..."
 
-      - name: Restore cached upstream state
-        id: cache-restore
-        uses: actions/cache/restore@v5
-        with:
-          path: /tmp/upstream-state.json
-          key: upstream-state-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: |
-            upstream-state-${{ github.ref_name }}-
-            upstream-state-
-
       - name: Decide whether to proceed
         id: decide
         run: |
@@ -156,20 +146,19 @@ jobs:
           echo "  Current digest: ${current_digest:0:19}..."
           echo "  Is manual run:  $is_manual"
           echo "  Force release:  $force"
-          echo "  Cache hit:      ${{ steps.cache-restore.outputs.cache-hit || 'false' }}"
 
           cached_version=""
           cached_digest=""
 
-          # Check if a previously saved upstream state was restored
-          if [ -f /tmp/upstream-state.json ]; then
-            cached_digest=$(jq -r '.digest // ""' /tmp/upstream-state.json)
-            cached_version=$(jq -r '.version // ""' /tmp/upstream-state.json)
-            echo "  Cache file found:"
+          # Read the last released upstream state from the tracked repo file
+          if [ -f .github/upstream-state.json ]; then
+            cached_digest=$(jq -r '.digest // ""' .github/upstream-state.json)
+            cached_version=$(jq -r '.version // ""' .github/upstream-state.json)
+            echo "  State file found:"
             echo "    cached_digest:  ${cached_digest:0:19}..."
             echo "    cached_version: $cached_version"
           else
-            echo "  Cache file NOT found (first run or cache restore missed)"
+            echo "  State file NOT found (first run)"
           fi
 
           echo "prev_digest=$cached_digest" >> "$GITHUB_OUTPUT"
@@ -391,33 +380,32 @@ jobs:
           echo "  Release created: $release_url"
           echo "::endgroup::"
 
-      - name: Write current upstream state
-        id: write_state
-        if: steps.decide.outputs.proceed == 'true'
+      - name: Persist upstream state
+        id: persist_state
+        if: success() && steps.decide.outputs.proceed == 'true'
         run: |
-          echo "Writing current state to /tmp/upstream-state.json"
+          echo "::group::Persist upstream state"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          echo "Writing state to .github/upstream-state.json"
           echo "  digest:  ${{ steps.check.outputs.current_digest }}"
           echo "  version: ${{ steps.check.outputs.upstream_version }}"
           jq -n \
             --arg digest "${{ steps.check.outputs.current_digest }}" \
             --arg version "${{ steps.check.outputs.upstream_version }}" \
             '{digest: $digest, version: $version}' \
-            > /tmp/upstream-state.json
-          echo "Written: $(cat /tmp/upstream-state.json)"
+            > .github/upstream-state.json
+          echo "Written: $(cat .github/upstream-state.json)"
 
-      - name: Save upstream state to cache
-        id: save_state
-        if: steps.decide.outputs.proceed == 'true'
-        uses: actions/cache/save@v5
-        with:
-          path: /tmp/upstream-state.json
-          key: upstream-state-${{ github.ref_name }}-${{ github.run_id }}
-      - name: Log cached state
-        if: steps.decide.outputs.proceed == 'true'
-        run: |
-          echo "::group::Save upstream state to cache"
-          echo "  Caching /tmp/upstream-state.json as 'upstream-state-${{ github.ref_name }}-${{ github.run_id }}'"
-          echo "  Contents: $(cat /tmp/upstream-state.json 2>/dev/null || echo 'file not found')"
+          git add .github/upstream-state.json
+          if git diff --cached --quiet; then
+            echo "  State file unchanged, nothing to commit"
+          else
+            git commit -m "chore: record upstream state ${{ steps.check.outputs.upstream_version }}"
+            git push origin "${{ github.ref_name }}"
+            echo "  State committed and pushed"
+          fi
           echo "::endgroup::"
 
       - name: Publish workflow summary
@@ -445,7 +433,7 @@ jobs:
               echo "- Build/push step: ${{ steps.build_push.conclusion || 'n/a' }}"
               echo "- Create tag step: ${{ steps.create_tag.conclusion || 'n/a' }}"
               echo "- Create release step: ${{ steps.create_release.conclusion || 'n/a' }}"
-              echo "- Save state step: ${{ steps.save_state.conclusion || 'n/a' }}"
+              echo "- Save state step: ${{ steps.persist_state.conclusion || 'n/a' }}"
               if [ -n "${{ steps.create_release.outputs.release_url }}" ]; then
                 echo "- Release URL: ${{ steps.create_release.outputs.release_url }}"
               fi
