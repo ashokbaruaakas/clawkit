@@ -40,7 +40,6 @@ jobs:
       bump_type: ${{ steps.version.outputs.bump_type }}
       current_digest: ${{ steps.check.outputs.current_digest }}
       upstream_version: ${{ steps.check.outputs.upstream_version }}
-      prev_digest: ${{ steps.decide.outputs.prev_digest }}
       prev_version: ${{ steps.decide.outputs.prev_version }}
       reason: ${{ steps.decide.outputs.reason }}
     steps:
@@ -148,20 +147,15 @@ jobs:
           echo "  Force release:  $force"
 
           cached_version=""
-          cached_digest=""
 
-          # Read the last released upstream state from the tracked repo file
-          if [ -f .github/upstream-state.json ]; then
-            cached_digest=$(jq -r '.digest // ""' .github/upstream-state.json)
-            cached_version=$(jq -r '.version // ""' .github/upstream-state.json)
-            echo "  State file found:"
-            echo "    cached_digest:  ${cached_digest:0:19}..."
-            echo "    cached_version: $cached_version"
+          # Derive the last released upstream version from the `openclaw-*` git tags
+          cached_version=$(git tag -l 'openclaw-*' | sed 's/^openclaw-//' | sort -V | tail -n1)
+          if [ -n "$cached_version" ]; then
+            echo "  Last released upstream version: $cached_version"
           else
-            echo "  State file NOT found (first run)"
+            echo "  No openclaw-* tag found (first run)"
           fi
 
-          echo "prev_digest=$cached_digest" >> "$GITHUB_OUTPUT"
           echo "prev_version=$cached_version" >> "$GITHUB_OUTPUT"
 
           # Manual force release -> always proceed
@@ -308,6 +302,16 @@ jobs:
           echo "  Local tag created, pushing to origin..."
           git push origin "$TAG"
           echo "  Tag pushed successfully"
+
+          # Record the released upstream version as a tag for state tracking.
+          UPSTREAM_TAG="openclaw-${{ steps.check.outputs.upstream_version }}"
+          if git rev-parse "$UPSTREAM_TAG" >/dev/null 2>&1; then
+            echo "  Upstream tag '$UPSTREAM_TAG' already exists, skipping"
+          else
+            git tag "$UPSTREAM_TAG"
+            git push origin "$UPSTREAM_TAG"
+            echo "  Upstream tag '$UPSTREAM_TAG' pushed"
+          fi
           echo "::endgroup::"
 
       - name: Create GitHub Release
@@ -321,7 +325,6 @@ jobs:
           UPSTREAM="${{ steps.check.outputs.upstream_version }}"
           DIGEST="${{ steps.check.outputs.current_digest }}"
           PREV_VERSION="${{ steps.decide.outputs.prev_version }}"
-          PREV_DIGEST="${{ steps.decide.outputs.prev_digest }}"
           REASON="${{ steps.decide.outputs.reason }}"
           BUMP_TYPE="${{ steps.version.outputs.bump_type }}"
 
@@ -330,7 +333,6 @@ jobs:
           echo "  Bump:    $BUMP_TYPE"
 
           SHORT_DIGEST=$(echo "$DIGEST" | head -c 19)
-          SHORT_PREV=$(echo "$PREV_DIGEST" | head -c 19)
 
           # Build release notes into a temp file (avoids YAML multi-line string issues)
           NOTES_FILE=$(mktemp)
@@ -341,7 +343,7 @@ jobs:
             echo "" >> "$NOTES_FILE"
             if [ -n "$PREV_VERSION" ]; then
               echo "**OpenClaw upstream updated** \`${PREV_VERSION}\` -> \`${UPSTREAM}\`" >> "$NOTES_FILE"
-              echo "  Digest: \`${SHORT_PREV}...\` -> \`${SHORT_DIGEST}...\`" >> "$NOTES_FILE"
+              echo "  Digest: \`${SHORT_DIGEST}...\`" >> "$NOTES_FILE"
             else
               echo "**OpenClaw upstream updated** -> \`${UPSTREAM}\` (digest: \`${SHORT_DIGEST}...\`)" >> "$NOTES_FILE"
             fi
@@ -380,34 +382,6 @@ jobs:
           echo "  Release created: $release_url"
           echo "::endgroup::"
 
-      - name: Persist upstream state
-        id: persist_state
-        if: success() && steps.decide.outputs.proceed == 'true'
-        run: |
-          echo "::group::Persist upstream state"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          echo "Writing state to .github/upstream-state.json"
-          echo "  digest:  ${{ steps.check.outputs.current_digest }}"
-          echo "  version: ${{ steps.check.outputs.upstream_version }}"
-          jq -n \
-            --arg digest "${{ steps.check.outputs.current_digest }}" \
-            --arg version "${{ steps.check.outputs.upstream_version }}" \
-            '{digest: $digest, version: $version}' \
-            > .github/upstream-state.json
-          echo "Written: $(cat .github/upstream-state.json)"
-
-          git add .github/upstream-state.json
-          if git diff --cached --quiet; then
-            echo "  State file unchanged, nothing to commit"
-          else
-            git commit -m "chore: record upstream state ${{ steps.check.outputs.upstream_version }}"
-            git push origin "${{ github.ref_name }}"
-            echo "  State committed and pushed"
-          fi
-          echo "::endgroup::"
-
       - name: Publish workflow summary
         if: always()
         run: |
@@ -433,7 +407,6 @@ jobs:
               echo "- Build/push step: ${{ steps.build_push.conclusion || 'n/a' }}"
               echo "- Create tag step: ${{ steps.create_tag.conclusion || 'n/a' }}"
               echo "- Create release step: ${{ steps.create_release.conclusion || 'n/a' }}"
-              echo "- Save state step: ${{ steps.persist_state.conclusion || 'n/a' }}"
               if [ -n "${{ steps.create_release.outputs.release_url }}" ]; then
                 echo "- Release URL: ${{ steps.create_release.outputs.release_url }}"
               fi
