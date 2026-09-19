@@ -4,11 +4,11 @@ Tracked improvements for future implementation. Work through these one at a time
 
 ---
 
-## 1 — Add `profiles` key to `example-docker-compose.yml` (Low)
+## 1 — Add `profiles` key to `docker-compose.yml` (Low)
 
 **Problem:** No compose profiles are defined. Adding one now is a non-breaking change that leaves room for future dev/prod variant files without a breaking rename.
 
-**Fix:** Add `profiles: [default]` under the `openclaw` service in `example-docker-compose.yml`.
+**Fix:** Add `profiles: [default]` under the `openclaw` service in `docker-compose.yml`.
 
 ---
 

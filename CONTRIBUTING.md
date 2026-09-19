@@ -72,7 +72,7 @@ If you changed only documentation files (`*.md`), no image build is required.
 
 ### Docker, compose, or env changes
 
-For changes to [Dockerfile](Dockerfile), [example-docker-compose.yml](example-docker-compose.yml), or [.env.example](.env.example), validate locally:
+For changes to [Dockerfile](Dockerfile), [docker-compose.yml](docker-compose.yml), or [.env.example](.env.example), validate locally:
 
 1. Build the image:
 
@@ -84,19 +84,19 @@ docker build -t clawkit:local .
 
 ```bash
 cp .env.example .env
-docker compose -f example-docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 3. Confirm the container is running and healthy from Docker's perspective:
 
 ```bash
-docker compose -f example-docker-compose.yml ps
+docker compose -f docker-compose.yml ps
 ```
 
 4. Stop test containers when done:
 
 ```bash
-docker compose -f example-docker-compose.yml down
+docker compose -f docker-compose.yml down
 ```
 
 ## Pull Request Checklist

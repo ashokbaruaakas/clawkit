@@ -22,9 +22,9 @@ If validated locally, include commands/results briefly:
 ```bash
 # example
 # docker build -t clawkit:local .
-# docker compose -f example-docker-compose.yml up -d
-# docker compose -f example-docker-compose.yml ps
-# docker compose -f example-docker-compose.yml down
+# docker compose -f docker-compose.yml up -d
+# docker compose -f docker-compose.yml ps
+# docker compose -f docker-compose.yml down
 ```
 
 ## Checklist
