@@ -20,7 +20,7 @@ cp .env.example .env
 # Edit .env with at least one LLM provider API key
 
 # 3. Start the container
-docker compose -f example-docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 Default behavior:
@@ -56,6 +56,47 @@ Optional integrations:
 
 - `DISCORD_BOT_TOKEN`
 - `NOTION_API_KEY`
+
+## Tailscale (optional)
+
+Clawkit can join your tailnet through an optional sidecar so you can reach the
+OpenClaw gateway over Tailscale and let OpenClaw SSH to other tailnet devices.
+It is opt-in and uses a separate Compose override file.
+
+### Enable
+
+1. Set `TS_AUTHKEY` in `.env` (generate one at
+   [https://login.tailscale.com/admin/settings/keys](https://login.tailscale.com/admin/settings/keys)).
+2. Start with both Compose files:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d
+```
+
+Stop using Tailscale by starting with only the base file:
+
+```bash
+docker compose -f docker-compose.yml up -d
+```
+
+### What it gives you
+
+- **Gateway over Tailscale:** access the gateway at
+  `https://<tailnet-hostname>:18789` from any device on your tailnet.
+- **SSH from OpenClaw to tailnet devices:** from inside the container, connect
+  with `ssh <tailnet-ip>` (or a MagicDNS name if `TS_ACCEPT_DNS=true`), using
+  the `openssh-client` already present in the image.
+
+### Details
+
+- The Tailscale node runs in **kernel networking mode** (`TS_USERSPACE=false`),
+  so it needs `/dev/net/tun` and `net_admin`/`net_raw` (available on Linux hosts
+  and Docker Desktop).
+- Node identity persists in the `openclaw-tailscale-state` volume. When you
+  upgrade OpenClaw, recreate both services together so the shared network
+  namespace stays in sync.
+- `TAILSCALE_HOSTNAME` overrides the tailnet machine name; `TS_EXTRA_ARGS` accepts
+  extra `tailscale up` flags (for example `--ssh --advertise-exit-node`).
 
 ## Image Tags
 
@@ -130,8 +171,8 @@ for the upstream behavior this relies on.
 The compose file sets `pull_policy: always`, so pulling and recreating is enough:
 
 ```bash
-docker compose -f example-docker-compose.yml pull
-docker compose -f example-docker-compose.yml up -d
+docker compose -f docker-compose.yml pull
+docker compose -f docker-compose.yml up -d
 ```
 
 No separate migration step is required for routine updates.
@@ -143,13 +184,13 @@ one-off backup against the state volume, writing to a host directory:
 
 ```bash
 mkdir -p backups
-docker compose -f example-docker-compose.yml stop
+docker compose -f docker-compose.yml stop
 docker run --rm \
   -v openclaw-node-home:/home/node \
   -v "$PWD/backups:/backup" \
   ghcr.io/ashokbaruaakas/clawkit:latest \
   node openclaw.mjs backup create --output /backup --verify
-docker compose -f example-docker-compose.yml start
+docker compose -f docker-compose.yml start
 ```
 
 See OpenClaw's [backup guidance](https://docs.openclaw.ai/install/updating/rollback-and-recovery#before-updating-create-a-verified-backup).
@@ -165,7 +206,7 @@ docker run --rm \
   -v openclaw-node-home:/home/node \
   ghcr.io/ashokbaruaakas/clawkit:latest \
   node openclaw.mjs doctor --fix
-docker compose -f example-docker-compose.yml up -d
+docker compose -f docker-compose.yml up -d
 ```
 
 ### Rollback
@@ -179,8 +220,8 @@ IMAGE_TAG=openclaw-2026.9.5
 ```
 
 ```bash
-docker compose -f example-docker-compose.yml pull
-docker compose -f example-docker-compose.yml up -d
+docker compose -f docker-compose.yml pull
+docker compose -f docker-compose.yml up -d
 ```
 
 ### Not applicable inside the container
