@@ -104,6 +104,80 @@ Published tags per release:
 - `v0.0.N`
 - `openclaw-<upstream-version>`
 
+## Upgrading OpenClaw
+
+Clawkit upgrades OpenClaw by replacing the image, not by running an in-container
+package updater. When a new image starts against the existing state volume, the
+Gateway runs its startup-safe migrations and plugin convergence before readiness.
+See OpenClaw's [Upgrading container images](https://docs.openclaw.ai/install/docker#upgrading-container-images)
+for the upstream behavior this relies on.
+
+### Routine upgrade
+
+The compose file sets `pull_policy: always`, so pulling and recreating is enough:
+
+```bash
+docker compose -f example-docker-compose.yml pull
+docker compose -f example-docker-compose.yml up -d
+```
+
+No separate migration step is required for routine updates.
+
+### Before a significant update
+
+OpenClaw recommends a verified backup before major version changes. Run a
+one-off backup against the state volume, writing to a host directory:
+
+```bash
+mkdir -p backups
+docker compose -f example-docker-compose.yml stop
+docker run --rm \
+  -v openclaw-node-home:/home/node \
+  -v "$PWD/backups:/backup" \
+  ghcr.io/ashokbaruaakas/clawkit:latest \
+  node openclaw.mjs backup create --output /backup --verify
+docker compose -f example-docker-compose.yml start
+```
+
+See OpenClaw's [backup guidance](https://docs.openclaw.ai/install/updating/rollback-and-recovery#before-updating-create-a-verified-backup).
+
+### If the container won't become healthy
+
+If startup cannot repair the mounted state safely, the Gateway exits instead of
+reporting healthy and Docker restarts it in a loop. Run the repair command once
+against the same state volume, then restart the container:
+
+```bash
+docker run --rm \
+  -v openclaw-node-home:/home/node \
+  ghcr.io/ashokbaruaakas/clawkit:latest \
+  node openclaw.mjs doctor --fix
+docker compose -f example-docker-compose.yml up -d
+```
+
+### Rollback
+
+To return to a previous OpenClaw version, pin `IMAGE_TAG` to the matching
+`openclaw-<version>` tag in `.env`, then recreate:
+
+```bash
+# .env
+IMAGE_TAG=openclaw-2026.9.5
+```
+
+```bash
+docker compose -f example-docker-compose.yml pull
+docker compose -f example-docker-compose.yml up -d
+```
+
+### Not applicable inside the container
+
+- `openclaw update` targets npm/pnpm/bun/git installs; the container image is
+  immutable, so replacing the image is the update path.
+- `openclaw migrate` is for cross-system moves (e.g. Claude import or
+  machine-to-machine). For clawkit, "migration" means moving the `node-home`
+  volume and config to a new host.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
