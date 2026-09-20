@@ -2,7 +2,6 @@ services:
   tailscale:
     image: tailscale/tailscale:stable
     container_name: "${CONTAINER_NAME}-tailscale"
-    hostname: "${TAILSCALE_HOSTNAME:-${CONTAINER_NAME}-ts}"
     network_mode: service:openclaw
     depends_on:
       - openclaw
