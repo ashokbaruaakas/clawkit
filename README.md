@@ -23,6 +23,11 @@ cp .env.example .env
 docker compose -f docker-compose.yml up -d
 ```
 
+On first run the Gateway boots in local mode and serves the Control UI at
+`http://127.0.0.1:18789` (or `http://127.0.0.1:${PORT}` if you changed `PORT`).
+Paste the `OPENCLAW_GATEWAY_TOKEN` from `.env` to finish onboarding and add your
+LLM providers.
+
 Default behavior:
 
 - Pulls `ghcr.io/ashokbaruaakas/clawkit:latest`
@@ -43,6 +48,7 @@ Common variables:
 OpenClaw runtime:
 
 - `OPENCLAW_GATEWAY_TOKEN`: (required) gateway authentication token; the Gateway will not authenticate without it
+- `OPENCLAW_GATEWAY_MODE`: gateway mode (default `local`); required for the first boot so the Gateway starts and serves the Control UI for onboarding
 - `OPENCLAW_NO_RESPAWN`: when set to `1`, disables automatic respawn behavior
 - `NODE_COMPILE_CACHE`: compile cache directory path
 
