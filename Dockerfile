@@ -42,3 +42,13 @@ RUN git clone --depth=1 https://github.com/Homebrew/brew "${HOMEBREW_REPOSITORY}
 ENV NODE_COMPILE_CACHE=/home/node/.cache/node-compile-cache
 RUN mkdir -p ${NODE_COMPILE_CACHE} && \
     chown -R node:node ${NODE_COMPILE_CACHE}
+
+# Default working directory for the container (also where `docker exec` lands).
+WORKDIR /home/node
+
+# Override the base image's cwd-relative entrypoint and healthcheck with
+# absolute paths so they still work now that WORKDIR is /home/node.
+CMD ["node", "/app/openclaw.mjs", "gateway"]
+
+HEALTHCHECK --interval=3m --timeout=10s --start-period=15s --retries=3 \
+  CMD ["node", "/app/dist/docker-healthcheck.js"]

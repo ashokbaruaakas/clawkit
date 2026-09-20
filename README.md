@@ -101,6 +101,7 @@ Default behavior:
 - Pulls `ghcr.io/ashokbaruaakas/clawkit:latest`
 - Publishes the gateway on host port `127.0.0.1:${PORT}` (default `18789`); the gateway itself always listens on `18789` inside the container
 - Persists `/home/node` and `/home/linuxbrew/.linuxbrew` via named volumes
+- Uses `/home/node` as the container's default working directory, so `docker exec -it clawkit sh` (or `bash`) lands there
 
 ## Configuration
 
@@ -302,7 +303,7 @@ docker run --rm \
   -v "${CONTAINER_NAME:-clawkit}-node-home:/home/node" \
   -v "$PWD/backups:/backup" \
   ghcr.io/ashokbaruaakas/clawkit:latest \
-  node openclaw.mjs backup create --output /backup --verify
+  node /app/openclaw.mjs backup create --output /backup --verify
 docker compose -f docker-compose.yml start
 ```
 
@@ -318,7 +319,7 @@ against the same state volume, then restart the container:
 docker run --rm \
   -v "${CONTAINER_NAME:-clawkit}-node-home:/home/node" \
   ghcr.io/ashokbaruaakas/clawkit:latest \
-  node openclaw.mjs doctor --fix
+  node /app/openclaw.mjs doctor --fix
 docker compose -f docker-compose.yml up -d
 ```
 
