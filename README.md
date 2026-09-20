@@ -24,6 +24,17 @@ cd clawkit
 # Edit .env with at least one LLM provider API key and a gateway token
 ```
 
+To name everything after your own bot (directory, container, volumes, network):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash -s mybot
+cd mybot
+```
+
+This sets `CONTAINER_NAME=mybot`, so the container is `mybot`, the Tailscale
+sidecar is `mybot-tailscale`, and the volumes/network follow `mybot-*` /
+`mybot_default`. See [Naming](#naming) for the full mapping.
+
 The deploy files are always fetched from the `main` branch, so re-running the
 installer picks up the latest files. The image version is pinned separately via
 `IMAGE_TAG` in `.env`.
@@ -97,7 +108,7 @@ All variables are documented in [.env.example](.env.example).
 
 Common variables:
 
-- `CONTAINER_NAME`: container name in Docker
+- `CONTAINER_NAME`: naming root for the container, volumes, and network (see [Naming](#naming))
 - `IMAGE_NAME`: image repository to pull from
 - `IMAGE_TAG`: image tag to use (defaults to `latest`)
 - `PORT`: host port to publish the gateway on (default `18789`); the container port stays `18789`
@@ -105,7 +116,6 @@ Common variables:
 OpenClaw runtime:
 
 - `OPENCLAW_GATEWAY_TOKEN`: (required) gateway authentication token. The starter config references it via `${OPENCLAW_GATEWAY_TOKEN}` so the Gateway reads it from `.env` at runtime
-- `OPENCLAW_NO_RESPAWN`: when set to `1`, disables automatic respawn behavior
 - `NODE_COMPILE_CACHE`: compile cache directory path
 
 Gateway mode and bind are **not** environment variables; they live in the
@@ -124,6 +134,35 @@ Optional integrations:
 
 - `DISCORD_BOT_TOKEN`
 - `NOTION_API_KEY`
+
+## Naming
+
+`CONTAINER_NAME` (default `clawkit`) is the single naming root. It drives:
+
+| Resource          | Value                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
+| Container         | `${CONTAINER_NAME}`                                                                                      |
+| Tailscale sidecar | `${CONTAINER_NAME}-tailscale`                                                                            |
+| Volumes           | `${CONTAINER_NAME}-node-home`, `${CONTAINER_NAME}-linuxbrew-prefix`, `${CONTAINER_NAME}-tailscale-state` |
+| Compose network   | `${CONTAINER_NAME}_default`                                                                              |
+| Tailnet machine   | `${CONTAINER_NAME}-ts` (override with `TS_HOSTNAME`)                                                     |
+
+Set it by installing with a custom name (`install.sh mybot`) or by editing
+`CONTAINER_NAME` in `.env`. Distinct names let you run multiple independent
+instances side by side on one host.
+
+> **Migrating from the old `openclaw-*` names.** Earlier versions used fixed
+> volume names (`openclaw-node-home`, `openclaw-linuxbrew-prefix`,
+> `openclaw-tailscale-state`). If you have data in those, copy each into the new
+> names before recreating, for example:
+>
+> ```bash
+> docker volume create clawkit-node-home
+> docker run --rm -v openclaw-node-home:/from -v clawkit-node-home:/to alpine cp -a /from/. /to/
+> ```
+>
+> Repeat for `linuxbrew-prefix` and `tailscale-state`, substituting your
+> `CONTAINER_NAME` if it isn't `clawkit`.
 
 ## Tailscale (optional)
 
@@ -166,7 +205,7 @@ docker compose -f docker-compose.yml up -d
 - The Tailscale node runs in **kernel networking mode** (`TS_USERSPACE=false`),
   so it needs `/dev/net/tun` and `net_admin`/`net_raw` (available on Linux hosts
   and Docker Desktop).
-- Node identity persists in the `openclaw-tailscale-state` volume. When you
+- Node identity persists in the `${CONTAINER_NAME}-tailscale-state` volume. When you
   upgrade OpenClaw, recreate both services together so the shared network
   namespace stays in sync.
 - `TS_EXTRA_ARGS` accepts extra `tailscale up` flags (for example
@@ -260,7 +299,7 @@ one-off backup against the state volume, writing to a host directory:
 mkdir -p backups
 docker compose -f docker-compose.yml stop
 docker run --rm \
-  -v openclaw-node-home:/home/node \
+  -v "${CONTAINER_NAME:-clawkit}-node-home:/home/node" \
   -v "$PWD/backups:/backup" \
   ghcr.io/ashokbaruaakas/clawkit:latest \
   node openclaw.mjs backup create --output /backup --verify
@@ -277,7 +316,7 @@ against the same state volume, then restart the container:
 
 ```bash
 docker run --rm \
-  -v openclaw-node-home:/home/node \
+  -v "${CONTAINER_NAME:-clawkit}-node-home:/home/node" \
   ghcr.io/ashokbaruaakas/clawkit:latest \
   node openclaw.mjs doctor --fix
 docker compose -f docker-compose.yml up -d
@@ -326,20 +365,21 @@ Verify nothing is left behind:
 
 ```bash
 docker ps -a      # no clawkit containers
-docker volume ls  # no openclaw-* volumes
-docker network ls # no clawkit_default network
+docker volume ls  # no ${CONTAINER_NAME}-* volumes
+docker network ls # no ${CONTAINER_NAME}_default network
 docker image ls   # no ghcr.io/ashokbaruaakas/clawkit image
 ```
 
 Notes:
 
 - Neither compose file defines an explicit `networks:` section, so Compose
-  auto-creates one default network (`clawkit_default`); `down` removes it along
-  with the containers. The Tailscale service uses `network_mode:
-  service:openclaw`, so it adds no separate network.
-- `down -v` deletes the `openclaw-node-home`, `openclaw-linuxbrew-prefix`, and
-  (with Tailscale) `openclaw-tailscale-state` volumes, including your config,
-  API keys, and chat history. Run a backup first if you want to keep that data.
+  auto-creates one default network (`${CONTAINER_NAME}_default`); `down` removes
+  it along with the containers. The Tailscale service uses `network_mode:
+service:openclaw`, so it adds no separate network.
+- `down -v` deletes the `${CONTAINER_NAME}-node-home`,
+  `${CONTAINER_NAME}-linuxbrew-prefix`, and (with Tailscale)
+  `${CONTAINER_NAME}-tailscale-state` volumes, including your config, API keys,
+  and chat history. Run a backup first if you want to keep that data.
 - If you pinned `IMAGE_TAG` to a specific tag, remove that image too:
   `docker image rm ghcr.io/ashokbaruaakas/clawkit:<tag>`.
 - Delete the `.env` file if you no longer need your local configuration.

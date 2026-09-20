@@ -10,12 +10,14 @@
 #   curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash
 #   # or, to install into a specific directory:
 #   curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash -s /path/to/clawkit
+#   # or, to name everything (container, volumes, network) after your bot:
+#   curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash -s mybot
 
 set -euo pipefail
 
 REPO="ashokbaruaakas/clawkit"
-BRANCH="main"
-RAW_BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
+REF="${CLAWKIT_REF:-main}"
+RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 
 FILES=(
   "docker-compose.yml"
@@ -24,6 +26,7 @@ FILES=(
 )
 
 TARGET_DIR="${1:-./clawkit}"
+NAME="$(basename "${TARGET_DIR}")"
 
 mkdir -p "${TARGET_DIR}"
 
@@ -34,8 +37,9 @@ for file in "${FILES[@]}"; do
 done
 
 if [ ! -f "${TARGET_DIR}/.env" ]; then
-  cp "${TARGET_DIR}/.env.example" "${TARGET_DIR}/.env"
-  echo "==> Created ${TARGET_DIR}/.env from .env.example"
+  awk -v name="${NAME}" 'BEGIN{OFS=FS="="} $1=="CONTAINER_NAME" {$0="CONTAINER_NAME=" name} {print}' \
+    "${TARGET_DIR}/.env.example" > "${TARGET_DIR}/.env"
+  echo "==> Created ${TARGET_DIR}/.env from .env.example (CONTAINER_NAME=${NAME})"
 else
   echo "==> ${TARGET_DIR}/.env already exists, leaving it untouched"
 fi
