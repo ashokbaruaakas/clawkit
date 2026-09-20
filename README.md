@@ -238,6 +238,44 @@ docker compose -f docker-compose.yml up -d
   machine-to-machine). For clawkit, "migration" means moving the `node-home`
   volume and config to a new host.
 
+## Uninstall
+
+To remove the containers, named volumes, network, and image completely:
+
+```bash
+# Stop and remove containers, the Compose network, and named volumes
+# (this deletes all OpenClaw state)
+docker compose -f docker-compose.yml down -v
+
+# If you enabled Tailscale, remove its container and state volume too
+docker compose -f docker-compose.yml -f docker-compose.tailscale.yml down -v
+
+# Remove the pulled image(s)
+docker image rm ghcr.io/ashokbaruaakas/clawkit:latest
+```
+
+Verify nothing is left behind:
+
+```bash
+docker ps -a      # no clawkit containers
+docker volume ls  # no openclaw-* volumes
+docker network ls # no clawkit_default network
+docker image ls   # no ghcr.io/ashokbaruaakas/clawkit image
+```
+
+Notes:
+
+- Neither compose file defines an explicit `networks:` section, so Compose
+  auto-creates one default network (`clawkit_default`); `down` removes it along
+  with the containers. The Tailscale service uses `network_mode:
+  service:openclaw`, so it adds no separate network.
+- `down -v` deletes the `openclaw-node-home`, `openclaw-linuxbrew-prefix`, and
+  (with Tailscale) `openclaw-tailscale-state` volumes, including your config,
+  API keys, and chat history. Run a backup first if you want to keep that data.
+- If you pinned `IMAGE_TAG` to a specific tag, remove that image too:
+  `docker image rm ghcr.io/ashokbaruaakas/clawkit:<tag>`.
+- Delete the `.env` file if you no longer need your local configuration.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
