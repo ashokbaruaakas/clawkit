@@ -1,7 +1,9 @@
+name: ${CONTAINER_NAME:-clawkit}
+
 services:
   openclaw:
     image: ${IMAGE_NAME}:${IMAGE_TAG:-latest}
-    container_name: "${CONTAINER_NAME}"
+    container_name: "${CONTAINER_NAME:-clawkit}"
     pull_policy: always
     ports:
       - "127.0.0.1:${PORT}:18789"
@@ -14,6 +16,6 @@ services:
 
 volumes:
   node-home:
-    name: openclaw-node-home
+    name: ${CONTAINER_NAME:-clawkit}-node-home
   linuxbrew-prefix:
-    name: openclaw-linuxbrew-prefix
+    name: ${CONTAINER_NAME:-clawkit}-linuxbrew-prefix

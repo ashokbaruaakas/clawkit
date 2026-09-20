@@ -10,12 +10,14 @@
 #   curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash
 #   # or, to install into a specific directory:
 #   curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash -s /path/to/clawkit
+#   # or, to name everything (container, volumes, network) after your bot:
+#   curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash -s mybot
 
 set -euo pipefail
 
 REPO="ashokbaruaakas/clawkit"
-BRANCH="main"
-RAW_BASE="https://raw.githubusercontent.com/${REPO}/${BRANCH}"
+REF="${CLAWKIT_REF:-main}"
+RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 
 FILES=(
   "docker-compose.yml"
@@ -24,6 +26,7 @@ FILES=(
 )
 
 TARGET_DIR="${1:-./clawkit}"
+NAME="$(basename "${TARGET_DIR}")"
 
 mkdir -p "${TARGET_DIR}"
 
@@ -34,8 +37,9 @@ for file in "${FILES[@]}"; do
 done
 
 if [ ! -f "${TARGET_DIR}/.env" ]; then
-  cp "${TARGET_DIR}/.env.example" "${TARGET_DIR}/.env"
-  echo "==> Created ${TARGET_DIR}/.env from .env.example"
+  awk -v name="${NAME}" 'BEGIN{OFS=FS="="} $1=="CONTAINER_NAME" {$0="CONTAINER_NAME=" name} {print}' \
+    "${TARGET_DIR}/.env.example" > "${TARGET_DIR}/.env"
+  echo "==> Created ${TARGET_DIR}/.env from .env.example (CONTAINER_NAME=${NAME})"
 else
   echo "==> ${TARGET_DIR}/.env already exists, leaving it untouched"
 fi
@@ -70,6 +74,9 @@ echo ""
 echo "Done. Next steps:"
 echo "  1. cd ${TARGET_DIR}"
 echo "  2. Edit .env and set OPENCLAW_GATEWAY_TOKEN (openssl rand -hex 32) and at least one LLM API key"
-echo "  3. docker compose -f docker-compose.yml up -d"
+echo "  3. Start without Tailscale:"
+echo "       docker compose -f docker-compose.yml up -d"
+echo "     Or with Tailscale (set TS_AUTHKEY in .env first):"
+echo "       docker compose -f docker-compose.yml -f docker-compose.tailscale.yml up -d"
 echo ""
 echo "Pin IMAGE_TAG to a specific openclaw-<version> tag in .env for reproducible production deployments."
