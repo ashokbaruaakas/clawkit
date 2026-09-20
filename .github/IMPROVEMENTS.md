@@ -27,3 +27,15 @@ Tracked improvements for future implementation. Work through these one at a time
 **Fix (when needed):** Add a specific negation rule in `.dockerignore`, for example `!docs/some-file.md`, if a markdown file ever needs to be included in the image build context.
 
 ---
+
+## 4 — Attach deploy files as GitHub Release assets (Low / reproducibility)
+
+**Problem:** The deploy path now serves files from `main` via `install.sh`. For
+version-locked reproducibility, users may want deploy files that match a
+specific release tag.
+
+**Fix (when needed):** Extend the `Create GitHub Release` step in
+`.github/workflows/release-check.yml` to `gh release upload` the compose files
+and `.env.example` (or a bundled tarball) for each release.
+
+---

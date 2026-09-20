@@ -10,6 +10,36 @@ A wrapper image around OpenClaw that adds Linuxbrew and development tooling, pub
 
 ## Quick Start
 
+You only need three files to run Clawkit: `docker-compose.yml`,
+`docker-compose.tailscale.yml`, and `.env.example`. You don't need to clone the
+repository.
+
+### Deploy without cloning (recommended)
+
+```bash
+# Download the deploy files into ./clawkit and seed .env
+curl -fsSL https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/install.sh | bash
+cd clawkit
+
+# Edit .env with at least one LLM provider API key and a gateway token
+```
+
+The deploy files are always fetched from the `main` branch, so re-running the
+installer picks up the latest files. The image version is pinned separately via
+`IMAGE_TAG` in `.env`.
+
+Manual alternative (no script):
+
+```bash
+mkdir -p clawkit && cd clawkit
+curl -fsSLO https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/docker-compose.yml
+curl -fsSLO https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/docker-compose.tailscale.yml
+curl -fsSLO https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/.env.example
+cp .env.example .env
+```
+
+### Clone the repo
+
 ```bash
 # 1. Clone the repo
 git clone https://github.com/ashokbaruaakas/clawkit.git
