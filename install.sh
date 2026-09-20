@@ -40,6 +40,32 @@ else
   echo "==> ${TARGET_DIR}/.env already exists, leaving it untouched"
 fi
 
+# Seed a starter gateway config so the Gateway boots in local mode and reads its
+# auth token from OPENCLAW_GATEWAY_TOKEN in .env via ${...} env substitution.
+# Only written when no config exists yet; never clobbers an existing config.
+CONFIG_PATH="/home/node/.openclaw/openclaw.json"
+
+if command -v docker >/dev/null 2>&1; then
+  echo "==> Seeding gateway config (mode=local, bind=lan, auth token from env)"
+  docker compose \
+    -f "${TARGET_DIR}/docker-compose.yml" \
+    --project-directory "${TARGET_DIR}" \
+    run --rm --no-deps -T --entrypoint sh openclaw -c \
+    "test -f '${CONFIG_PATH}' || cat > '${CONFIG_PATH}'" <<'CONFIG_EOF'
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": { "mode": "token", "token": "${OPENCLAW_GATEWAY_TOKEN}" }
+  }
+}
+CONFIG_EOF
+else
+  echo "==> Docker not found; skipping config seed. After installing Docker, run:"
+  echo "    docker compose -f docker-compose.yml run --rm --no-deps -T --entrypoint sh openclaw -c \\"
+  echo "      \"test -f /home/node/.openclaw/openclaw.json || cat > /home/node/.openclaw/openclaw.json\""
+fi
+
 echo ""
 echo "Done. Next steps:"
 echo "  1. cd ${TARGET_DIR}"

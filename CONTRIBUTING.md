@@ -61,7 +61,8 @@ The production deploy path downloads the deploy files from `main` via
 ([docker-compose.yml](docker-compose.yml), [docker-compose.tailscale.yml](docker-compose.tailscale.yml),
 or [.env.example](.env.example)):
 
-1. Update [install.sh](install.sh) if the set of files it downloads changes.
+1. Update [install.sh](install.sh) if the set of files it downloads or the starter
+   gateway config it seeds changes.
 2. Update the "Deploy without cloning" section of [README.md](README.md) if the
    steps change.
 3. Mention the deploy-path impact in your PR description.
