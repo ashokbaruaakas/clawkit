@@ -36,6 +36,19 @@ curl -fsSLO https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/docker
 curl -fsSLO https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/docker-compose.tailscale.yml
 curl -fsSLO https://raw.githubusercontent.com/ashokbaruaakas/clawkit/main/.env.example
 cp .env.example .env
+
+# Seed the starter gateway config (mode=local, bind=lan, token from .env)
+docker compose -f docker-compose.yml run --rm --no-deps -T --entrypoint sh openclaw -c \
+  "test -f /home/node/.openclaw/openclaw.json || cat > /home/node/.openclaw/openclaw.json" \
+  <<'EOF'
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": { "mode": "token", "token": "${OPENCLAW_GATEWAY_TOKEN}" }
+  }
+}
+EOF
 ```
 
 ### Clone the repo
@@ -47,16 +60,30 @@ cd clawkit
 
 # 2. Copy the environment file
 cp .env.example .env
-# Edit .env with at least one LLM provider API key
+# Edit .env with at least one LLM provider API key and a gateway token
 
-# 3. Start the container
+# 3. Seed the starter gateway config (mode=local, bind=lan, token from .env)
+docker compose -f docker-compose.yml run --rm --no-deps -T --entrypoint sh openclaw -c \
+  "test -f /home/node/.openclaw/openclaw.json || cat > /home/node/.openclaw/openclaw.json" \
+  <<'EOF'
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": { "mode": "token", "token": "${OPENCLAW_GATEWAY_TOKEN}" }
+  }
+}
+EOF
+
+# 4. Start the container
 docker compose -f docker-compose.yml up -d
 ```
 
 On first run the Gateway boots in local mode and serves the Control UI at
 `http://127.0.0.1:18789` (or `http://127.0.0.1:${PORT}` if you changed `PORT`).
-Paste the `OPENCLAW_GATEWAY_TOKEN` from `.env` to finish onboarding and add your
-LLM providers.
+Your `OPENCLAW_GATEWAY_TOKEN` from `.env` is read automatically via the seeded
+config, so you can sign in with it to finish onboarding and add your LLM
+providers.
 
 Default behavior:
 
@@ -77,10 +104,15 @@ Common variables:
 
 OpenClaw runtime:
 
-- `OPENCLAW_GATEWAY_TOKEN`: (required) gateway authentication token; the Gateway will not authenticate without it
-- `OPENCLAW_GATEWAY_MODE`: gateway mode (default `local`); required for the first boot so the Gateway starts and serves the Control UI for onboarding
+- `OPENCLAW_GATEWAY_TOKEN`: (required) gateway authentication token. The starter config references it via `${OPENCLAW_GATEWAY_TOKEN}` so the Gateway reads it from `.env` at runtime
 - `OPENCLAW_NO_RESPAWN`: when set to `1`, disables automatic respawn behavior
 - `NODE_COMPILE_CACHE`: compile cache directory path
+
+Gateway mode and bind are **not** environment variables; they live in the
+Gateway config file `/home/node/.openclaw/openclaw.json` (persisted in the
+`node-home` volume). The installer seeds a starter config with `gateway.mode: "local"`
+and `gateway.bind: "lan"` so the Gateway boots locally and is reachable from the
+Tailscale sidecar. There is no `OPENCLAW_GATEWAY_MODE` variable.
 
 LLM providers (set at least one):
 
@@ -125,6 +157,12 @@ docker compose -f docker-compose.yml up -d
 
 ### Details
 
+- The seeded config sets `gateway.bind: "lan"` (listens on `0.0.0.0` inside the
+  container) so the Gateway is reachable over the Tailscale interface. This is
+  **not** publicly exposed: the host publishes only `127.0.0.1:${PORT}`, no
+  Tailscale `serve`/`funnel` is enabled, and the Gateway still requires auth via
+  `OPENCLAW_GATEWAY_TOKEN`. Tailscale is therefore the only remote path to the
+  dashboard.
 - The Tailscale node runs in **kernel networking mode** (`TS_USERSPACE=false`),
   so it needs `/dev/net/tun` and `net_admin`/`net_raw` (available on Linux hosts
   and Docker Desktop).
