@@ -53,6 +53,19 @@ Key expectations:
 - Keep LF line endings.
 - Preserve existing style in each file (for example, `Dockerfile` uses 4-space indentation per [.editorconfig](.editorconfig)).
 
+### Rule 4 — Keep the deploy path in sync
+
+The production deploy path downloads the deploy files from `main` via
+[install.sh](install.sh) and the "Deploy without cloning" section of
+[README.md](README.md). If you change any deploy file
+([docker-compose.yml](docker-compose.yml), [docker-compose.tailscale.yml](docker-compose.tailscale.yml),
+or [.env.example](.env.example)):
+
+1. Update [install.sh](install.sh) if the set of files it downloads changes.
+2. Update the "Deploy without cloning" section of [README.md](README.md) if the
+   steps change.
+3. Mention the deploy-path impact in your PR description.
+
 ## Prerequisites
 
 Before contributing, ensure you have:
