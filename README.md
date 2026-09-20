@@ -95,8 +95,8 @@ docker compose -f docker-compose.yml up -d
 - Node identity persists in the `openclaw-tailscale-state` volume. When you
   upgrade OpenClaw, recreate both services together so the shared network
   namespace stays in sync.
-- `TAILSCALE_HOSTNAME` overrides the tailnet machine name; `TS_EXTRA_ARGS` accepts
-  extra `tailscale up` flags (for example `--ssh --advertise-exit-node`).
+- `TS_EXTRA_ARGS` accepts extra `tailscale up` flags (for example
+  `--ssh --advertise-exit-node`).
 
 ## Image Tags
 
